@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>量子星云</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+        body { margin: 0; overflow: hidden; background-color: #000000; color: #00f3ff; font-family: "Microsoft YaHei", "Heiti SC", 'Orbitron', sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; cursor: grab; }
+        #canvas-container:active { cursor: grabbing; }
+        
+        /* UI 样式 */
+        #cam-container {
+            position: absolute; top: 20px; left: 20px; width: 320px; height: 240px; z-index: 10;
+            border: 2px solid #00f3ff; background: rgba(0, 5, 10, 0.9);
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.2);
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+        #cam-container.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        #cam-container::after {
+            content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: repeating-linear-gradient(0deg, rgba(0, 243, 255, 0.05) 0px, rgba(0, 243, 255, 0.05) 1px, transparent 2px, transparent 4px);
+            pointer-events: none;
+        }
+        #input_video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); pointer-events: none; }
+        .hud-label { position: absolute; top: 0; left: 0; width: 100%; font-size: 12px; background: rgba(0, 243, 255, 0.8); color: #000; padding: 2px 0; text-align: center; font-weight: bold; z-index: 20; }
+
+        #ui-layer {
+            position: absolute; bottom: 30px; left: 30px; z-index: 10; width: 360px;
+            background: rgba(0, 5, 10, 0.9); backdrop-filter: blur(10px);
+            border-left: 4px solid #00f3ff; padding: 25px;
+            clip-path: polygon(0 0, 100% 0, 100% 92%, 92% 100%, 0 100%);
+            box-shadow: 10px 10px 40px rgba(0,0,0,0.8);
+        }
+
+        h1 { font-size: 20px; margin: 0 0 15px 0; border-bottom: 1px solid rgba(0, 243, 255, 0.3); padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .data-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 10px; align-items: center; color: #ccc; }
+        .bar-container { flex-grow: 1; height: 5px; background: rgba(255,255,255,0.1); margin-left: 10px; border-radius: 3px; overflow: hidden; }
+        .bar-fill { height: 100%; background: #00f3ff; width: 0%; transition: width 0.05s linear; box-shadow: 0 0 8px #00f3ff; }
+        .bar-fill.red { background: #ff0055; box-shadow: 0 0 8px #ff0055; }
+        
+        button { background: rgba(0, 243, 255, 0.05); border: 1px solid #00f3ff; color: #00f3ff; padding: 8px 0; cursor: pointer; font-family: "Microsoft YaHei"; font-size: 11px; font-weight: bold; transition: all 0.2s; width: 48%; margin-top: 8px; }
+        button:hover { background: #00f3ff; color: #000; box-shadow: 0 0 15px rgba(0, 243, 255, 0.8); }
+        button.active { background: #00f3ff; color: #000; box-shadow: 0 0 15px #00f3ff; }
+        button.stop { border-color: #ff0055; color: #ff0055; width: 100%; }
+        button.stop:hover { background: #ff0055; color: #fff; }
+        
+        /* 返回主页按钮样式 */
+        .btn-home {
+            width: 100%;
+            background: linear-gradient(90deg, rgba(0, 243, 255, 0.1), rgba(0, 243, 255, 0.2));
+            border: 1px solid #00f3ff;
+            color: #fff;
+            font-size: 14px;
+            padding: 10px 0;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .btn-home:hover {
+            background: #00f3ff;
+            color: #000;
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.5);
+        }
+
+        .btn-group { display: flex; justify-content: space-between; flex-wrap: wrap; margin-bottom: 5px; }
+        input[type="file"] { display: none; }
+        .file-upload-label { display: inline-block; text-align: center; margin-top: 8px; border: 1px dashed #666; padding: 8px 0; font-size: 11px; color: #888; cursor: pointer; width: 100%; box-sizing: border-box; transition: all 0.3s; }
+        .file-upload-label:hover { border-color: #00f3ff; color: #00f3ff; }
+        
+        #mode-display { position: absolute; top: 30px; right: 40px; text-align: right; z-index: 10; pointer-events: none; }
+        #mode-title { font-size: 40px; font-weight: bold; text-shadow: 0 0 30px rgba(0, 243, 255, 0.6); color: #fff; }
+        #mode-subtitle { font-size: 16px; letter-spacing: 6px; color: #00f3ff; margin-top: 5px; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; background: #000; padding: 20px 40px; border: 1px solid #00f3ff; text-align: center; box-shadow: 0 0 50px rgba(0,243,255,0.2); }
+    </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<div id="loading">
+    <div style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">系统核心加载...</div>
+    <div style="color: #666;">防误触系统 | 柔光引擎 | 音频校准</div>
+</div>
+
+<!-- 摄像机容器 -->
+<div id="cam-container">
+    <div class="hud-label">手势追踪 (实时)</div>
+    <video id="input_video"></video>
+    <canvas id="output_canvas"></canvas>
+</div>
+
+<div id="mode-display">
+    <div id="mode-title">星云-01</div>
+    <div id="mode-subtitle">动态时空隧道</div>
+</div>
+
+<!-- 控制台 -->
+<div id="ui-layer">
+    <h1>
+        <span>星云控制台</span>
+        <span style="font-size:10px; opacity:0.5; border:1px solid #00f3ff; padding:2px 4px;">V 8.0</span>
+    </h1>
+    
+    <!-- 新增：返回主页按钮 -->
+    <button id="btn-home" class="btn-home" onclick="window.location.href='../index.html'">⬅ 返回主页</button>
+
+    <div class="data-row">
+        <span>低频 [律动]</span>
+        <div class="bar-container"><div id="bar-bass" class="bar-fill"></div></div>
+    </div>
+    <div class="data-row">
+        <span>中频 [爆炸]</span>
+        <div class="bar-container"><div id="bar-mid" class="bar-fill red"></div></div>
+    </div>
+    <div class="data-row">
+        <span>高频 [坍缩]</span>
+        <div class="bar-container"><div id="bar-treble" class="bar-fill"></div></div>
+    </div>
+    <div class="data-row">
+        <span>指令状态</span>
+        <span id="gesture-status" style="color: #fff; text-align: right; width: auto; flex-grow: 1;">等待输入...</span>
+    </div>
+
+    <div class="btn-group">
+        <button id="btn-mic">启用麦克风</button>
+        <button id="btn-sys-audio">捕获系统声音</button>
+    </div>
+    
+    <!-- 新增：摄像头开关控制 -->
+    <div class="btn-group">
+        <button id="btn-toggle-cam" class="active">关闭摄像头预览</button>
+        <button id="btn-stop-audio" class="stop">关闭音频输入 (静音)</button>
+    </div>
+
+    <div class="btn-group">
+        <label for="audio-file" class="file-upload-label">加载本地 MP3 文件</label>
+        <input type="file" id="audio-file" accept="audio/*">
+    </div>
+
+    <div class="btn-group">
+        <button id="btn-prev">&lt; 上一模式</button>
+        <button id="btn-next">下一模式 &gt;</button>
+    </div>
+</div>
+
+<div id="canvas-container"></div>
+
+<script>
+    // ==========================================
+    // 全局变量
+    // ==========================================
+    let scene, camera, renderer, composer, bloomPass;
+    let particles, geometry, material;
+    let bgParticles;
+    let time = 0;
+    
+    const PARTICLE_COUNT = 50000; 
+    const BG_PARTICLE_COUNT = 10000; 
+
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const sizes = new Float32Array(PARTICLE_COUNT); 
+    const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+    const colors = new Float32Array(PARTICLE_COUNT * 3);
+    
+    const FORMS = [
+        { name: "星云-01", sub: "动态时空隧道", id: 0 },
+        { name: "星云-02", sub: "破碎 DNA 双螺旋", id: 1 },
+        { name: "星云-03", sub: "正弦波地形矩阵", id: 2 },
+        { name: "星云-04", sub: "复杂多层环面", id: 3 },
+        { name: "星云-05", sub: "高维扭结投影", id: 4 },
+        { name: "星云-06", sub: "单面拓扑循环", id: 5 },
+        { name: "星云-07", sub: "混沌吸引子", id: 6 },
+        { name: "星云-08", sub: "黄金分割点阵球", id: 7 },
+        { name: "星云-09", sub: "超立方体投影", id: 8 }
+    ];
+    let currentFormIndex = 0;
+    
+    // 音频
+    let audioContext, analyser, dataArray, audioSource, audioStream;
+    let bass = 0, mid = 0, treble = 0;
+    
+    // 交互
+    let isHandPresent = false;
+    let gestureCooldown = 0;
+    
+    // 挥手切换的变量 (掌根距离检测)
+    let swipeStart = { x: null, time: 0 };
+    
+    let isDragging = false;
+    let dragStartHand = {x:0, y:0};
+    let dragStartParticlePos = {x:0, y:0};
+    let particleTargetPos = {x:0, y:0};
+    
+    // 动画
+    let targetScale = 1.0;
+    let currentScale = 1.0;
+    let targetBloomStrength = 0.8; 
+    let currentBloomStrength = 0.8;
+    let expansionFactor = 0.0;
+
+    // ==========================================
+    // 1. Three.js 初始化 (柔光版)
+    // ==========================================
+    function initThree() {
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.0015);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3000);
+        camera.position.z = 70;
+
+        renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const renderScene = new THREE.RenderPass(scene, camera);
+        
+        // 柔光设置
+        bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.2; // 高阈值
+        bloomPass.strength = 0.7;  // 柔和强度
+        bloomPass.radius = 0.6;
+
+        composer = new THREE.EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // 主粒子
+        geometry = new THREE.BufferGeometry();
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 200;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 200;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 200;
+            const color = new THREE.Color();
+            color.setHSL(0.55 + Math.random() * 0.1, 0.8, 0.5); 
+            colors[i * 3] = color.r; colors[i * 3 + 1] = color.g; colors[i * 3 + 2] = color.b;
+            sizes[i] = Math.random();
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+        const sprite = new THREE.TextureLoader().load('https://threejs.org/examples/textures/sprites/spark1.png');
+        
+        const shaderMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                pointTexture: { value: sprite },
+                globalPointSize: { value: 1.5 },
+                expansionFactor: { value: 0.0 }
+            },
+            vertexShader: `
+                attribute float size;
+                varying vec3 vColor;
+                uniform float globalPointSize;
+                uniform float expansionFactor;
+                void main() {
+                    vColor = color;
+                    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+                    float dynamicSize = size * (1.0 + expansionFactor * 5.0); 
+                    gl_PointSize = dynamicSize * globalPointSize * ( 350.0 / -mvPosition.z );
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D pointTexture;
+                varying vec3 vColor;
+                void main() {
+                    vec4 tex = texture2D( pointTexture, gl_PointCoord );
+                    if (tex.a < 0.1) discard;
+                    // 颜色亮度 1.1 倍
+                    gl_FragColor = vec4( vColor * 1.1, 1.0 ) * tex; 
+                }
+            `,
+            blending: THREE.AdditiveBlending,
+            depthTest: false,
+            transparent: true,
+            vertexColors: true
+        });
+        particles = new THREE.Points(geometry, shaderMaterial);
+        scene.add(particles);
+        
+        // 背景
+        const bgGeometry = new THREE.BufferGeometry();
+        const bgPos = [];
+        for(let i=0; i<BG_PARTICLE_COUNT; i++) bgPos.push((Math.random()-0.5)*700, (Math.random()-0.5)*700, (Math.random()-0.5)*700);
+        bgGeometry.setAttribute('position', new THREE.Float32BufferAttribute(bgPos, 3));
+        const bgMaterial = new THREE.PointsMaterial({ color: 0x2255aa, size: 1.0, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+        bgParticles = new THREE.Points(bgGeometry, bgMaterial);
+        scene.add(bgParticles);
+
+        calculateTargetForm(0);
+        window.addEventListener('resize', onWindowResize, false);
+        document.addEventListener('keydown', onKeyDown, false);
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // ==========================================
+    // 2. 形态生成
+    // ==========================================
+    function calculateTargetForm(formIndex) {
+        const index = formIndex % FORMS.length;
+        document.getElementById('mode-title').innerText = FORMS[index].name;
+        document.getElementById('mode-subtitle').innerText = FORMS[index].sub;
+        const baseHue = (index / FORMS.length) * 0.5 + 0.5;
+        const jitter = () => (Math.random() - 0.5) * 3.0;
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            let x, y, z;
+            const p = i / PARTICLE_COUNT;
+            
+            const color = new THREE.Color();
+            color.setHSL((baseHue + Math.random() * 0.15) % 1.0, 0.8, 0.5);
+            colors[i3] = color.r; colors[i3+1] = color.g; colors[i3+2] = color.b;
+
+            switch (index) {
+                case 0: const r=15+Math.random()*10; const a=p*150; x=Math.cos(a)*r; y=Math.sin(a)*r; z=(p-0.5)*250; break;
+                case 1: const dr=15; const da=p*40*Math.PI; x=Math.cos(da)*dr; z=Math.sin(da)*dr; y=(p-0.5)*140; if(i%2===0){x*=-1;z*=-1;} x+=jitter();y+=jitter();z+=jitter(); break;
+                case 2: x=(p-0.5)*200; z=(Math.random()-0.5)*200; y=Math.sin(x*0.1)*15+Math.cos(z*0.1)*15+jitter()*2; break;
+                case 3: const tr=40, tube=12, tu=p*Math.PI*30, tv=p*Math.PI*2; x=(tr+tube*Math.cos(tv))*Math.cos(tu); y=(tr+tube*Math.cos(tv))*Math.sin(tu); z=tube*Math.sin(tv); break;
+                case 4: const t=p*Math.PI*8; x=(Math.sin(t)+2*Math.sin(2*t))*10+jitter(); y=(Math.cos(t)-2*Math.cos(2*t))*10+jitter(); z=-Math.sin(3*t)*10+jitter(); break;
+                case 5: const u=p*Math.PI*6, v=(Math.random()-0.5)*10, mr=30; x=(mr+v*Math.cos(u/2))*Math.cos(u); y=(mr+v*Math.cos(u/2))*Math.sin(u); z=v*Math.sin(u/2); break;
+                case 6: const la=p*400, lr=(Math.sin(la)*30); x=Math.cos(la)*lr; y=Math.sin(la)*lr; z=(p-0.5)*80; break;
+                case 7: const phi=Math.acos(1-2*p), theta=Math.sqrt(PARTICLE_COUNT*Math.PI)*phi, sr=50+Math.random()*3; x=sr*Math.cos(theta)*Math.sin(phi); y=sr*Math.sin(theta)*Math.sin(phi); z=sr*Math.cos(phi); break;
+                case 8: const edge=70; x=(Math.random()-0.5)*edge; y=(Math.random()-0.5)*edge; z=(Math.random()-0.5)*edge; if(Math.random()>0.3){if(Math.random()>0.66)x=(x>0?0.5:-0.5)*edge;else if(Math.random()>0.33)y=(y>0?0.5:-0.5)*edge;else z=(z>0?0.5:-0.5)*edge;} break;
+            }
+            targetPositions[i3] = x; targetPositions[i3+1] = y; targetPositions[i3+2] = z;
+        }
+        geometry.attributes.color.needsUpdate = true;
+    }
+
+    // ==========================================
+    // 3. 音频管理
+    // ==========================================
+    function initAudioContext() {
+        if(!audioContext) {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            audioContext = new AC();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = 0.85; 
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+        }
+        if(audioContext.state === 'suspended') audioContext.resume();
+    }
+
+    function resetAudioButtons() { 
+        document.querySelectorAll('button').forEach(b => {
+            if(b.id !== 'btn-home' && b.id !== 'btn-toggle-cam') { // 保持Home和Cam按钮状态
+                b.classList.remove('active');
+            }
+        }); 
+    }
+
+    document.getElementById('btn-mic').onclick = async () => {
+        initAudioContext(); resetAudioButtons();
+        document.getElementById('btn-mic').classList.add('active');
+        if(audioStream) audioStream.getTracks().forEach(t=>t.stop());
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+            audioStream = stream;
+            if(audioSource) audioSource.disconnect();
+            audioSource = audioContext.createMediaStreamSource(stream);
+            audioSource.connect(analyser);
+        } catch(e) { alert("无法访问麦克风"); }
+    };
+
+    document.getElementById('btn-sys-audio').onclick = async () => {
+        initAudioContext(); resetAudioButtons();
+        document.getElementById('btn-sys-audio').classList.add('active');
+        try {
+            const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            audioStream = stream;
+            const audioTrack = stream.getAudioTracks()[0];
+            if(!audioTrack) { alert("未分享音频"); return; }
+            stream.getVideoTracks().forEach(t => t.stop());
+            if(audioSource) audioSource.disconnect();
+            audioSource = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+            audioSource.connect(analyser);
+        } catch(e) { console.error(e); }
+    };
+
+    document.getElementById('btn-stop-audio').onclick = () => {
+        if(audioStream) audioStream.getTracks().forEach(t=>t.stop());
+        if(audioSource) audioSource.disconnect();
+        resetAudioButtons();
+        bass=0; mid=0; treble=0; updateAudioUI();
+    };
+    
+    document.getElementById('audio-file').onchange = (e) => {
+        initAudioContext(); resetAudioButtons();
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            audioContext.decodeAudioData(ev.target.result, (buf) => {
+                if(audioSource) audioSource.disconnect();
+                audioSource = audioContext.createBufferSource();
+                audioSource.buffer = buf; audioSource.loop = true;
+                audioSource.connect(analyser); analyser.connect(audioContext.destination);
+                audioSource.start(0);
+            });
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    // 新增：摄像头开关控制
+    document.getElementById('btn-toggle-cam').onclick = function() {
+        const camContainer = document.getElementById('cam-container');
+        const btn = this;
+        
+        if (camContainer.classList.contains('hidden')) {
+            // 显示摄像头
+            camContainer.classList.remove('hidden');
+            btn.innerText = "关闭摄像头预览";
+            btn.classList.add('active');
+        } else {
+            // 隐藏摄像头
+            camContainer.classList.add('hidden');
+            btn.innerText = "显示摄像头预览";
+            btn.classList.remove('active');
+        }
+    };
+
+    function updateAudioUI() {
+        document.getElementById('bar-bass').style.width = (bass * 100) + '%';
+        document.getElementById('bar-mid').style.width = (mid * 100) + '%';
+        document.getElementById('bar-treble').style.width = (treble * 100) + '%';
+    }
+
+    // ==========================================
+    // 4. 手势逻辑 (距离检测防误触)
+    // ==========================================
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    
+    hands.onResults((results) => {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            isHandPresent = true;
+            const lm = results.multiHandLandmarks[0];
+            for (const landmarks of results.multiHandLandmarks) {
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00f3ff', lineWidth: 2});
+                drawLandmarks(canvasCtx, landmarks, {color: '#ff0055', lineWidth: 1, radius: 3});
+            }
+
+            const thumb = lm[4]; const index = lm[8]; const wrist = lm[0];
+            const palmX = lm[9].x; const palmY = lm[9].y;
+            const wristX = lm[0].x; // 掌根 X
+            const statusEl = document.getElementById('gesture-status');
+
+            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            const tips = [8, 12, 16, 20];
+            let avgTipDist = 0;
+            tips.forEach(t => { avgTipDist += Math.hypot(lm[t].x - wrist.x, lm[t].y - wrist.y); });
+            avgTipDist /= 4;
+
+            // --- 切换判定：位移距离法 ---
+            const now = Date.now();
+            
+            // 初始化起点
+            if (swipeStart.x === null) {
+                swipeStart.x = wristX;
+                swipeStart.time = now;
+            }
+
+            const dist = wristX - swipeStart.x;
+            const timeDiff = now - swipeStart.time;
+
+            // 如果在 500ms 内没有完成动作，重置起点，避免慢慢移动触发
+            if (timeDiff > 500) {
+                swipeStart.x = wristX;
+                swipeStart.time = now;
+            }
+
+            // 1. 挥动 (距离 > 30% 屏幕宽度)
+            if (Math.abs(dist) > 0.3 && gestureCooldown <= 0) {
+                if (dist > 0) { switchForm(1); statusEl.innerText = "挥动: 下一个 >>"; }
+                else { switchForm(-1); statusEl.innerText = "<< 挥动: 上一个"; }
+                statusEl.style.color = "#00f3ff";
+                gestureCooldown = 50; // 冷却
+                swipeStart.x = null; // 触发后重置
+                isDragging = false;
+            } 
+            else if (gestureCooldown > 0) {
+                statusEl.innerText = `指令冷却中...`; statusEl.style.color = "#666"; isDragging = false;
+            }
+            // 2. 握拳 (坍缩+变亮)
+            else if (avgTipDist < 0.25) { 
+                targetScale = 0.3; 
+                targetBloomStrength = 3.0; 
+                expansionFactor = 0.0;
+                statusEl.innerText = "握拳: 核心聚变"; statusEl.style.color = "#ffff00";
+                isDragging = false;
+                swipeStart.x = null; // 握拳时重置挥动检测
+            }
+            // 3. 捏合 (拖拽)
+            else if (pinchDist < 0.08) { 
+                if (!isDragging) {
+                    isDragging = true;
+                    dragStartHand = {x: palmX, y: palmY};
+                    dragStartParticlePos = {x: particleTargetPos.x, y: particleTargetPos.y};
+                }
+                const sensitivity = 200;
+                const dx = (palmX - dragStartHand.x) * sensitivity; 
+                const dy = (palmY - dragStartHand.y) * sensitivity; 
+                particleTargetPos.x = dragStartParticlePos.x + dx;
+                particleTargetPos.y = dragStartParticlePos.y - dy;
+
+                targetBloomStrength = 0.8; 
+                statusEl.innerText = "捏合: 拖拽星系"; statusEl.style.color = "#ff0055";
+                swipeStart.x = null;
+            }
+            // 4. 张开 (扩展)
+            else { 
+                isDragging = false;
+                const openFactor = Math.min(Math.max((pinchDist - 0.1) * 3.0, 0), 1.0);
+                targetScale = 1.0 + openFactor * 3.5; 
+                targetBloomStrength = 0.7 + openFactor * 0.3; 
+                expansionFactor = openFactor;
+                statusEl.innerText = "张开: 宇宙扩散"; statusEl.style.color = "#fff";
+            }
+
+        } else {
+            isHandPresent = false; isDragging = false;
+            targetScale = 1.0; targetBloomStrength = 0.8; expansionFactor = 0.0;
+            swipeStart.x = null;
+            document.getElementById('gesture-status').innerText = "等待手势...";
+        }
+        canvasCtx.restore();
+    });
+
+    const cameraObj = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240 });
+    videoElement.addEventListener('loadeddata', () => { canvasElement.width = videoElement.videoWidth; canvasElement.height = videoElement.videoHeight; });
+    cameraObj.start().then(() => { document.getElementById('loading').style.display = 'none'; });
+
+    // ==========================================
+    // 5. 渲染循环 (新音频逻辑)
+    // ==========================================
+    function switchForm(dir) { currentFormIndex = (currentFormIndex + dir + FORMS.length) % FORMS.length; calculateTargetForm(currentFormIndex); }
+    document.getElementById('btn-next').onclick = () => switchForm(1); document.getElementById('btn-prev').onclick = () => switchForm(-1);
+    function onKeyDown(e) { if(e.code==='Space') switchForm(1); }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        time += 0.01;
+        if(gestureCooldown > 0) gestureCooldown--;
+
+        if(analyser) {
+            analyser.getByteFrequencyData(dataArray);
+            let b=0, m=0, t=0;
+            for(let i=1; i<5; i++) b += dataArray[i];
+            for(let i=6; i<100; i++) m += dataArray[i];
+            for(let i=101; i<200; i++) t += dataArray[i];
+            
+            bass = b / 4 / 255;
+            mid = m / 94 / 255;
+            treble = t / 99 / 255;
+        }
+        updateAudioUI();
+
+        currentScale += (targetScale - currentScale) * 0.1;
+        currentBloomStrength += (targetBloomStrength - currentBloomStrength) * 0.05;
+        bloomPass.strength = currentBloomStrength;
+        
+        particles.position.x += (particleTargetPos.x - particles.position.x) * 0.1;
+        particles.position.y += (particleTargetPos.y - particles.position.y) * 0.1;
+        
+        const currentExp = particles.material.uniforms.expansionFactor.value;
+        particles.material.uniforms.expansionFactor.value += (expansionFactor - currentExp) * 0.1;
+
+        // --- 音频核心逻辑 ---
+        let audioScaleMod = 1.0;
+
+        // 1. 低频 (Bass) -> 律动 (Pulse)
+        // 心跳般的缩放，幅度适中
+        audioScaleMod += Math.sin(time * 10) * bass * 0.1; 
+
+        // 3. 高频 (Treble) -> 坍缩 (Collapse)
+        // 高音出现时，星云整体缩小
+        if (treble > 0.5) {
+            audioScaleMod -= treble * 0.4;
+        }
+
+        const finalScale = currentScale * audioScaleMod;
+        particles.scale.set(finalScale, finalScale, finalScale);
+        
+        particles.rotation.y += 0.002 + mid * 0.01;
+        bgParticles.rotation.y -= 0.0005; 
+
+        const array = geometry.attributes.position.array;
+        for(let i=0; i<PARTICLE_COUNT; i++) {
+            const i3 = i*3;
+            array[i3] += (targetPositions[i3] - array[i3]) * 0.05;
+            array[i3+1] += (targetPositions[i3+1] - array[i3+1]) * 0.05;
+            array[i3+2] += (targetPositions[i3+2] - array[i3+2]) * 0.05;
+            
+            // 2. 中频 (Mid) -> 爆炸 (Explosion)
+            // 随机剧烈抖动
+            if(mid > 0.2) {
+                const shake = mid * 5.0; // 爆炸幅度
+                array[i3] += (Math.random()-0.5) * shake;
+                array[i3+1] += (Math.random()-0.5) * shake;
+                array[i3+2] += (Math.random()-0.5) * shake;
+            }
+        }
+        geometry.attributes.position.needsUpdate = true;
+        composer.render();
+    }
+
+    initThree();
+    animate();
+
+</script>
+</body>
+</html>

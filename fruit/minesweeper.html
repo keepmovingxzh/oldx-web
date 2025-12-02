@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>手势扫雷</title>
+  <!-- 替换为 unpkg 源 -->
+  <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body { margin: 0; padding: 0; background-color: #2c3e50; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; }
+    #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+    
+    .input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.2; }
+    .output_canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); pointer-events: none; z-index: 5; }
+    
+    #ui-layer { position: absolute; width: 100%; height: 100%; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+
+    #top-bar { 
+      position: absolute; top: 0; left: 0; width: 100%; height: 80px; 
+      background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent); 
+      display: flex; justify-content: center; align-items: center; gap: 40px;
+      color: white; font-size: 28px; font-weight: bold;
+      text-shadow: 0 2px 4px black;
+    }
+    .mode-indicator { 
+        padding: 10px 30px; border-radius: 30px; font-weight: bold; transition: 0.3s; 
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3); border: 3px solid white;
+    }
+    .mode-dig { background: #2ecc71; color: #fff; }
+    .mode-flag { background: #e74c3c; color: #fff; }
+
+    #board { 
+      display: grid; gap: 2px; background: #7f8c8d; padding: 5px; border-radius: 4px; 
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      pointer-events: auto; 
+    }
+    
+    .cell {
+      width: 40px; height: 40px; background: #bdc3c7; 
+      display: flex; justify-content: center; align-items: center;
+      font-weight: bold; font-size: 20px;
+      border: 2px outset #ecf0f1;
+    }
+    .cell.open { background: #ecf0f1; border: 1px solid #bdc3c7; }
+    .cell.bomb { background: #e74c3c; }
+    .cell.flag { background: #bdc3c7; }
+    
+    .c1 { color: #2980b9; } .c2 { color: #27ae60; } .c3 { color: #c0392b; } .c4 { color: #8e44ad; }
+    .c5 { color: #d35400; } .c6 { color: #16a085; } .c7 { color: #2c3e50; } .c8 { color: #7f8c8d; }
+
+    .menu { 
+        position: absolute; background: rgba(0,0,0,0.85); padding: 40px; border-radius: 20px; 
+        text-align: center; color: white; z-index: 20; pointer-events: auto; 
+        display: flex; flex-direction: column; align-items: center; gap: 15px;
+        border: 2px solid #fff;
+    }
+    .hidden { display: none !important; }
+    
+    .btn { 
+        padding: 15px 40px; font-size: 22px; border: none; border-radius: 50px; 
+        cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; color: white; font-weight: bold;
+        border: 3px solid transparent; width: 300px;
+    }
+    .btn.hover-active { transform: scale(1.1); border-color: white; box-shadow: 0 0 15px white; }
+    
+    .btn-easy { background: #2ecc71; }
+    .btn-medium { background: #f39c12; }
+    .btn-hard { background: #e74c3c; }
+    .btn-back { background: #95a5a6; }
+
+    #cursor {
+      position: absolute; width: 60px; height: 60px;
+      pointer-events: none; transform: translate(-50%, -50%);
+      z-index: 100; transition: left 0.08s linear, top 0.08s linear; 
+      display: flex; justify-content: center; align-items: center;
+    }
+    
+    .progress-ring { position: absolute; top: 0; left: 0; }
+    .progress-ring__circle {
+      transition: 0.05s stroke-dashoffset;
+      transform: rotate(-90deg); transform-origin: 50% 50%;
+    }
+    
+    .cursor-inner { 
+        font-size: 30px; background: rgba(255,255,255,0.9); 
+        width: 40px; height: 40px; border-radius: 50%;
+        display: flex; justify-content: center; align-items: center;
+        box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+
+    #gesture-hint {
+        position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+        color: rgba(255,255,255,0.8); font-size: 20px; text-align: center;
+        background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 10px;
+    }
+
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <video class="input_video" playsinline></video>
+  <canvas class="output_canvas"></canvas>
+  
+  <div id="top-bar" class="hidden">
+    <div>💣 <span id="bomb-count">10</span></div>
+    <div id="mode-display" class="mode-indicator mode-dig">☝️ 挖掘模式</div>
+    <div>⏱️ <span id="timer">0</span></div>
+  </div>
+
+  <div id="ui-layer">
+    <div id="board" class="hidden"></div>
+  </div>
+
+  <div id="difficulty-menu" class="menu">
+    <h1>🚩 手势扫雷</h1>
+    <p style="margin-bottom: 20px; color: #ccc;">
+      ☝️ 伸直食指 = 挖掘 <br>
+      ✊ 握紧拳头 = 插旗
+    </p>
+    <button class="btn btn-easy interactive-btn" data-action="initGame(9, 9, 10)">简单 (9x9)</button>
+    <button class="btn btn-medium interactive-btn" data-action="initGame(16, 16, 40)">中等 (16x16)</button>
+    <button class="btn btn-hard interactive-btn" data-action="initGame(20, 16, 60)">困难 (20x16)</button>
+    <button class="btn btn-back interactive-btn" data-action="window.location.href='index.html'">返回主菜单</button>
+  </div>
+
+  <div id="result-menu" class="menu hidden">
+    <h1 id="result-title" style="font-size: 48px;">游戏结束</h1>
+    <button class="btn btn-medium interactive-btn" data-action="location.reload()">再来一把</button>
+    <button class="btn btn-back interactive-btn" data-action="window.location.href='index.html'">返回主菜单</button>
+  </div>
+
+  <div id="gesture-hint">请举起一只手，伸出食指控制光标</div>
+
+  <div id="cursor">
+    <svg class="progress-ring" width="60" height="60">
+      <circle class="progress-ring__circle" stroke="#2ecc71" stroke-width="5" fill="transparent" r="26" cx="30" cy="30"/>
+    </svg>
+    <div class="cursor-inner" id="cursor-icon">⛏️</div>
+  </div>
+</div>
+
+<script>
+  const HOVER_THRESHOLD = 1000; 
+  let gameState = 'MENU'; 
+  
+  let boardRows = 9, boardCols = 9, totalMines = 10;
+  let grid = []; 
+  let remainingMines = 10;
+  let startTime = 0;
+  let timerInterval = null;
+  let isFirstClick = true; 
+
+  let cursorX = window.innerWidth/2, cursorY = window.innerHeight/2;
+  let hoverTarget = null; 
+  let hoverStartTime = 0;
+  let currentMode = 'DIG'; 
+
+  const boardEl = document.getElementById('board');
+  const cursorEl = document.getElementById('cursor');
+  const progressCircle = document.querySelector('.progress-ring__circle');
+  const cursorIcon = document.getElementById('cursor-icon');
+  const modeDisplay = document.getElementById('mode-display');
+  
+  const radius = progressCircle.r.baseVal.value;
+  const circumference = radius * 2 * Math.PI;
+  progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
+  progressCircle.style.strokeDashoffset = circumference;
+
+  function setProgress(percent) {
+    const offset = circumference - (percent / 100) * circumference;
+    progressCircle.style.strokeDashoffset = offset;
+  }
+
+  window.executeAction = function(actionStr) {
+      if(actionStr.startsWith('initGame')) {
+          const args = actionStr.match(/\d+/g).map(Number);
+          initGame(args[0], args[1], args[2]);
+      } else if (actionStr.includes('location.reload')) {
+          location.reload();
+      } else if (actionStr.includes('window.location.href')) {
+          window.location.href = 'index.html';
+      }
+  }
+
+  // ================== 扫雷逻辑 ==================
+  
+  function initGame(rows, cols, mines) {
+    boardRows = rows; boardCols = cols; totalMines = mines;
+    remainingMines = mines;
+    grid = [];
+    isFirstClick = true; 
+    
+    document.getElementById('difficulty-menu').classList.add('hidden');
+    document.getElementById('top-bar').classList.remove('hidden');
+    boardEl.classList.remove('hidden');
+    
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${boardCols}, 40px)`;
+    
+    for(let r=0; r<boardRows; r++) {
+      let row = [];
+      for(let c=0; c<boardCols; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell interactive-cell';
+        cell.dataset.r = r; cell.dataset.c = c;
+        boardEl.appendChild(cell);
+        row.push({ isMine: false, isOpen: false, isFlagged: false, count: 0, el: cell });
+      }
+      grid.push(row);
+    }
+    
+    gameState = 'PLAYING';
+    startTime = Date.now();
+    updateHUD();
+    
+    if(timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      const seconds = Math.floor((Date.now() - startTime) / 1000);
+      document.getElementById('timer').innerText = seconds;
+    }, 1000);
+    
+    printCheatSheet();
+  }
+
+  function placeMines(startR, startC) {
+      let minesPlaced = 0;
+      const isSafe = (r, c) => {
+          return Math.abs(r - startR) <= 1 && Math.abs(c - startC) <= 1;
+      };
+
+      while(minesPlaced < totalMines) {
+        const r = Math.floor(Math.random() * boardRows);
+        const c = Math.floor(Math.random() * boardCols);
+        if(!grid[r][c].isMine && !isSafe(r, c)) {
+          grid[r][c].isMine = true;
+          minesPlaced++;
+        }
+      }
+      
+      for(let r=0; r<boardRows; r++) {
+        for(let c=0; c<boardCols; c++) {
+          if(!grid[r][c].isMine) grid[r][c].count = countNeighbors(r, c);
+        }
+      }
+      printCheatSheet();
+  }
+
+  function printCheatSheet() {
+      console.clear();
+      console.log("%c 🕵️‍♂️ [上帝视角] 地雷分布矩阵 (1=雷, 0=空)", "color: #e74c3c; font-size: 16px; font-weight: bold;");
+      let output = "";
+      for(let r=0; r<boardRows; r++) {
+          let rowStr = "";
+          for(let c=0; c<boardCols; c++) {
+              rowStr += grid[r][c].isMine ? "1 " : "0 ";
+          }
+          output += rowStr + "\n";
+      }
+      console.log(output);
+  }
+
+  function countNeighbors(r, c) {
+    let count = 0;
+    for(let i=-1; i<=1; i++) for(let j=-1; j<=1; j++) {
+        const nr = r+i, nc = c+j;
+        if(nr>=0 && nr<boardRows && nc>=0 && nc<boardCols && grid[nr][nc].isMine) count++;
+    }
+    return count;
+  }
+
+  function handleCellAction(r, c) {
+    if(gameState !== 'PLAYING') return;
+    const cell = grid[r][c];
+    
+    if(currentMode === 'DIG') {
+        if(cell.isFlagged || cell.isOpen) return;
+        if(isFirstClick) {
+            placeMines(r, c);
+            isFirstClick = false;
+        }
+        openCell(r, c);
+    } else if(currentMode === 'FLAG') {
+        if(cell.isOpen) return;
+        cell.isFlagged = !cell.isFlagged;
+        cell.el.innerText = cell.isFlagged ? '🚩' : '';
+        cell.el.classList.toggle('flag', cell.isFlagged);
+        remainingMines += cell.isFlagged ? -1 : 1;
+        updateHUD();
+    }
+  }
+
+  function openCell(r, c) {
+    const cell = grid[r][c];
+    if(cell.isOpen || cell.isFlagged) return;
+    cell.isOpen = true;
+    cell.el.classList.add('open');
+    
+    if(cell.isMine) {
+      cell.el.innerText = '💣'; cell.el.classList.add('bomb');
+      gameOver(false);
+    } else {
+      if(cell.count > 0) {
+        cell.el.innerText = cell.count; cell.el.classList.add(`c${cell.count}`);
+      } else {
+        for(let i=-1; i<=1; i++) for(let j=-1; j<=1; j++) {
+            const nr = r+i, nc = c+j;
+            if(nr>=0 && nr<boardRows && nc>=0 && nc<boardCols) openCell(nr, nc);
+        }
+      }
+    }
+    checkWin();
+  }
+
+  function checkWin() {
+    let closedSafeCells = 0;
+    for(let r=0; r<boardRows; r++) for(let c=0; c<boardCols; c++) {
+        if(!grid[r][c].isMine && !grid[r][c].isOpen) closedSafeCells++;
+    }
+    if(closedSafeCells === 0) gameOver(true);
+  }
+
+  function gameOver(win) {
+    gameState = win ? 'WIN' : 'GAMEOVER';
+    clearInterval(timerInterval);
+    if(!win) {
+      for(let r=0; r<boardRows; r++) for(let c=0; c<boardCols; c++) {
+          if(grid[r][c].isMine) { grid[r][c].el.innerText = '💣'; grid[r][c].el.classList.add('bomb'); }
+      }
+    }
+    document.getElementById('result-menu').classList.remove('hidden');
+    const title = document.getElementById('result-title');
+    title.innerText = win ? "🎉 扫雷成功!" : "💥 踩到雷了!";
+    title.style.color = win ? "#2ecc71" : "#e74c3c";
+  }
+
+  function updateHUD() {
+    document.getElementById('bomb-count').innerText = remainingMines;
+    modeDisplay.innerText = currentMode === 'DIG' ? "☝️ 挖掘模式" : "✊ 插旗模式";
+    modeDisplay.className = `mode-indicator ${currentMode === 'DIG' ? 'mode-dig' : 'mode-flag'}`;
+    cursorIcon.innerText = currentMode === 'DIG' ? "⛏️" : "🚩";
+    progressCircle.style.stroke = currentMode === 'DIG' ? "#2ecc71" : "#e74c3c";
+  }
+
+  // ================== MediaPipe (UNPKG Fix) ==================
+  const videoElement = document.getElementsByClassName('input_video')[0];
+  const canvasElement = document.getElementsByClassName('output_canvas')[0];
+  const canvasCtx = canvasElement.getContext('2d');
+  
+  const hands = new Hands({locateFile: (file) => `https://unpkg.com/@mediapipe/hands/${file}`});
+  hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+
+  hands.onResults((results) => {
+    canvasElement.width = window.innerWidth;
+    canvasElement.height = window.innerHeight;
+    const W = canvasElement.width;
+    const H = canvasElement.height;
+    canvasCtx.clearRect(0, 0, W, H);
+
+    if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const landmarks = results.multiHandLandmarks[0];
+      
+      const wrist = landmarks[0];
+      const indexTip = landmarks[8];
+      const indexMcp = landmarks[5]; 
+      const dTip = Math.hypot(indexTip.x - wrist.x, indexTip.y - wrist.y);
+      const dMcp = Math.hypot(indexMcp.x - wrist.x, indexMcp.y - wrist.y);
+      const isFist = dTip < dMcp * 1.1; 
+
+      const newMode = isFist ? 'FLAG' : 'DIG';
+      if(newMode !== currentMode) {
+        currentMode = newMode;
+        updateHUD();
+      }
+      
+      // 绘制骨架 (在 Canvas 上)
+      drawSkeleton(landmarks, W, H);
+
+      const pointer = isFist ? landmarks[5] : landmarks[8];
+      
+      const screenX = (1 - pointer.x) * window.innerWidth; 
+      const screenY = pointer.y * window.innerHeight;
+      
+      cursorX += (screenX - cursorX) * 0.3;
+      cursorY += (screenY - cursorY) * 0.3;
+
+      cursorEl.style.left = `${cursorX}px`;
+      cursorEl.style.top = `${cursorY}px`;
+      
+      checkHover();
+    } else {
+      resetHover();
+    }
+  });
+
+  function checkHover() {
+    cursorEl.style.display = 'none';
+    const el = document.elementFromPoint(cursorX, cursorY);
+    cursorEl.style.display = 'flex';
+    
+    let target = null;
+    if (el) {
+        if (el.classList.contains('interactive-btn')) {
+            target = { type: 'btn', el: el, action: el.dataset.action };
+        } else if (gameState === 'PLAYING' && el.classList.contains('interactive-cell')) {
+            const r = parseInt(el.dataset.r);
+            const c = parseInt(el.dataset.c);
+            target = { type: 'cell', r: r, c: c };
+        }
+    }
+
+    if (target) {
+        const isSameTarget = hoverTarget && 
+            ((target.type === 'btn' && hoverTarget.el === target.el) ||
+             (target.type === 'cell' && hoverTarget.r === target.r && hoverTarget.c === target.c));
+        
+        if (!isSameTarget) {
+            hoverTarget = target;
+            hoverStartTime = Date.now();
+            setProgress(0);
+            if(target.type === 'btn') target.el.classList.add('hover-active');
+        } else {
+            const elapsed = Date.now() - hoverStartTime;
+            const percent = Math.min(100, (elapsed / HOVER_THRESHOLD) * 100);
+            setProgress(percent);
+            
+            if (elapsed >= HOVER_THRESHOLD) {
+                triggerAction(target);
+                resetHover(); 
+            }
+        }
+    } else {
+        resetHover();
+    }
+  }
+
+  function resetHover() {
+    if (hoverTarget && hoverTarget.type === 'btn') {
+        hoverTarget.el.classList.remove('hover-active');
+    }
+    hoverTarget = null;
+    setProgress(0);
+  }
+
+  function triggerAction(target) {
+      cursorEl.style.transform = "translate(-50%, -50%) scale(1.3)";
+      setTimeout(() => cursorEl.style.transform = "translate(-50%, -50%) scale(1)", 150);
+      if (target.type === 'btn') window.executeAction(target.action);
+      else if (target.type === 'cell') handleCellAction(target.r, target.c);
+  }
+
+  function mapCoordinates(point, video, canvasW, canvasH) {
+    const videoW = video.videoWidth || 1280; const videoH = video.videoHeight || 720;
+    const videoAspect = videoW / videoH; const screenAspect = canvasW / canvasH;
+    let scale, offsetX, offsetY;
+    if (screenAspect > videoAspect) {
+        scale = canvasW / videoW; const visibleVideoH = canvasH / scale; offsetY = (videoH - visibleVideoH) / 2; offsetX = 0;
+    } else {
+        scale = canvasH / videoH; const visibleVideoW = canvasW / scale; offsetX = (videoW - visibleVideoW) / 2; offsetY = 0;
+    }
+    const pixelX = point.x * videoW; const pixelY = point.y * videoH;
+    const finalX = (pixelX - offsetX) * scale; const finalY = (pixelY - offsetY) * scale;
+    return { x: finalX, y: finalY };
+  }
+
+  function drawSkeleton(landmarks, W, H) {
+    canvasCtx.save(); 
+    // 颜色随模式变化
+    canvasCtx.strokeStyle = currentMode === 'DIG' ? "rgba(46, 204, 113, 0.6)" : "rgba(231, 76, 60, 0.6)"; 
+    canvasCtx.lineWidth = 4;
+    canvasCtx.lineCap = "round";
+    
+    for (const connection of HAND_CONNECTIONS) {
+        const p1 = landmarks[connection[0]]; const p2 = landmarks[connection[1]];
+        const c1 = mapCoordinates(p1, videoElement, W, H); const c2 = mapCoordinates(p2, videoElement, W, H);
+        canvasCtx.beginPath(); canvasCtx.moveTo(c1.x, c1.y); canvasCtx.lineTo(c2.x, c2.y); canvasCtx.stroke();
+    }
+    
+    canvasCtx.fillStyle = "rgba(255, 255, 255, 0.8)";
+    for (let lm of landmarks) {
+        const c = mapCoordinates(lm, videoElement, W, H);
+        canvasCtx.beginPath(); canvasCtx.arc(c.x, c.y, 4, 0, 2*Math.PI); canvasCtx.fill();
+    }
+    canvasCtx.restore();
+  }
+
+  const camera = new Camera(videoElement, {
+    onFrame: async () => { if(videoElement.videoWidth) await hands.send({image: videoElement}); },
+    width: 1280, height: 720
+  });
+  camera.start();
+
+</script>
+</body>
+</html>

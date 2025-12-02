@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Cyber Memory Tree</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- 核心库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    
+    <!-- 后期处理库 (用于发光) -->
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+    <!-- AI 视觉库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <!-- 加载层 -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">INITIALIZING MEMORY CORE...</div>
+    </div>
+
+    <!-- UI 层 -->
+    <div id="ui-layer">
+        <!-- 左上角调试窗口 -->
+        <div class="debug-window">
+            <canvas id="debug-canvas" width="320" height="240"></canvas>
+            <div class="debug-info">
+                STATUS: <span id="hand-status">SEARCHING...</span>
+            </div>
+        </div>
+
+        <!-- 光标 -->
+        <div id="cursor"></div>
+
+        <!-- 底部提示 -->
+        <div class="hud">
+            <div class="hud-title">MEMORY GALAXY SYSTEM</div>
+            <div id="instruction" class="hud-subtitle">🖐️ SPREAD HAND TO EXPLODE</div>
+        </div>
+
+        <button class="back-btn" onclick="window.location.href='index.html'">EXIT SYSTEM</button>
+    </div>
+
+    <!-- 隐藏的视频源 -->
+    <video id="input_video" playsinline style="display:none"></video>
+
+    <!-- 逻辑入口 -->
+    <script src="app.js"></script>
+</body>
+</html>

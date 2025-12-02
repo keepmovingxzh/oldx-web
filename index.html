@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oldx's Personal Space</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Noto+Sans+SC:wght@300;500&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Libraries -->
+    <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div class="bg-animation"></div>
+
+    <video class="input_video" style="display: none;"></video>
+    <div id="hand-cursor" class="cursor-hidden"></div>
+
+    <div class="container">
+        <header class="main-header">
+            <h1 class="glow-text">欢迎来到oldx的个人网站</h1>
+            <p class="subtitle">请开始探索吧</p>
+            
+            <button id="gesture-btn" class="neon-btn">
+                <span class="btn-icon">🖐️</span> 开启手势操控
+            </button>
+            <p id="status-text" class="status-hidden">正在初始化神经连接...</p>
+        </header>
+
+        <main class="modules-grid" id="card-container">
+            <a href="./fruit/index.html" class="module-card" id="card-fruit">
+                <div class="card-content">
+                    <div class="icon">🍉</div>
+                    <h2>切水果游戏</h2>
+                    <p>体验经典的指尖动作游戏</p>
+                </div>
+                <div class="card-border"></div>
+            </a>
+
+            <a href="./star/index.html" class="module-card" id="card-star">
+                <div class="card-content">
+                    <div class="icon">🌌</div>
+                    <h2>手势星云</h2>
+                    <p>探索浩瀚的交互式星云</p>
+                </div>
+                <div class="card-border"></div>
+            </a>
+
+            <a href="./gesture/index.html" class="module-card" id="card-gesture">
+                <div class="card-content">
+                    <div class="icon">🖐️</div>
+                    <h2>手势 Hub</h2>
+                    <p>所有手势交互的控制中心</p>
+                </div>
+                <div class="card-border"></div>
+            </a>
+        </main>
+
+        <!-- 新增：留言板入口区域 -->
+        <section style="margin-top: 4rem; text-align: center;">
+            <a href="./message_board/index.html" class="neon-link">
+                💬 进入留言板 / Guestbook
+            </a>
+        </section>
+        
+        <footer class="main-footer">
+            <p>&copy; 2025 Oldx. All Rights Reserved.</p>
+        </footer>
+    </div>
+
+    <script src="js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.7.0/vanilla-tilt.min.js"></script>
+    <script>
+        VanillaTilt.init(document.querySelectorAll(".module-card"), {
+            max: 15,
+            speed: 400,
+            glare: true,
+            "max-glare": 0.2,
+        });
+    </script>
+</body>
+</html>

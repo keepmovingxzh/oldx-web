@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>手势炫舞</title>
+  <!-- 替换为 unpkg 源 -->
+  <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body { margin: 0; padding: 0; background-color: #000; overflow: hidden; font-family: 'Arial', sans-serif; }
+    #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+    .input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    .output_canvas { position: absolute; width: 100%; height: 100%; transform: scaleX(-1); }
+    #ui-layer { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10; display: flex; flex-direction: column; justify-content: space-between; }
+    .top-bar { padding: 20px; display: flex; justify-content: space-between; font-size: 30px; color: white; text-shadow: 0 0 10px #e91e63; font-weight: bold; }
+    .judge-line { width: 100%; height: 100px; border-top: 4px solid rgba(255, 255, 255, 0.5); background: linear-gradient(to bottom, rgba(255,255,255,0.1), transparent); position: absolute; bottom: 50px; display: flex; justify-content: space-around; align-items: center; }
+    .target-icon { font-size: 60px; opacity: 0.3; transition: transform 0.1s; }
+    .target-icon.active { opacity: 1; transform: scale(1.2); text-shadow: 0 0 20px gold; }
+    #combo-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #fff; }
+    .combo-count { font-size: 80px; font-weight: bold; color: #f1c40f; text-shadow: 0 0 20px orange; }
+    .judge-text { font-size: 40px; color: #2ecc71; font-weight: bold; animation: pop 0.2s; }
+    #center-msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; z-index: 20; pointer-events: none; text-shadow: 0 0 10px black; }
+    .loading-spinner { border: 8px solid rgba(255,255,255,0.3); border-radius: 50%; border-top: 8px solid #e91e63; width: 60px; height: 60px; animation: spin 1s linear infinite; margin: 0 auto 20px auto; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+    .menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.85); padding: 40px; border-radius: 20px; text-align: center; backdrop-filter: blur(10px); pointer-events: auto; z-index: 30; border: 2px solid #e91e63; }
+    .hidden { display: none !important; }
+    .btn { margin-top: 20px; padding: 15px 40px; font-size: 24px; background: #e91e63; color: white; border: none; border-radius: 50px; cursor: pointer; }
+    .btn:hover { transform: scale(1.05); }
+    .btn-secondary { background: transparent; border: 2px solid #fff; margin-left: 10px; }
+    .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+    #guide-text { position: absolute; top: 20%; width: 100%; text-align: center; color: rgba(255,255,255,0.8); font-size: 24px; text-shadow: 0 0 5px black; }
+    @keyframes pop { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <video class="input_video" playsinline></video>
+  <canvas class="output_canvas"></canvas>
+  
+  <div id="ui-layer">
+    <div class="top-bar">
+      <div>SCORE: <span id="score">0</span></div>
+      <div>TIME: <span id="time">60</span></div>
+    </div>
+
+    <div id="guide-text">请在屏幕中做出 "V" (剪刀手) 并指向落下的方向</div>
+
+    <div id="combo-display">
+      <div id="judge-text" class="judge-text"></div>
+      <div id="combo-text" class="combo-count hidden">0 COMBO</div>
+    </div>
+
+    <div class="judge-line">
+      <div class="target-icon" id="icon-LEFT">⬅️</div>
+      <div class="target-icon" id="icon-UP">⬆️</div>
+      <div class="target-icon" id="icon-DOWN">⬇️</div>
+      <div class="target-icon" id="icon-RIGHT">➡️</div>
+    </div>
+  </div>
+
+  <div id="center-msg">
+    <div id="loading-panel">
+      <div class="loading-spinner"></div>
+      <p style="font-size: 24px;">正在初始化 AI 模型...</p>
+    </div>
+    
+    <div id="waiting-panel" class="hidden">
+      <p style="font-size: 36px; animation: pulse 1.5s infinite;">👋 请举起你的手</p>
+      <p style="font-size: 18px; opacity: 0.8;">检测到手势后自动开始</p>
+    </div>
+
+    <h1 id="countdown" style="font-size:120px; color:white; text-shadow:0 0 30px #e91e63;" class="hidden">3</h1>
+  </div>
+
+  <div id="game-over-panel" class="menu hidden">
+    <h2 style="color: #e91e63; font-size: 40px; margin:0 0 20px 0;">舞力全开!</h2>
+    <p style="font-size: 30px; color: white;">得分: <span id="final-score" style="color: #f1c40f;">0</span></p>
+    <div style="margin-top: 30px;">
+      <button class="btn" onclick="resetGame()">再玩一次</button>
+      <button class="btn btn-secondary" onclick="window.location.href='index.html'">返回主菜单</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SoundManager = {
+    ctx: null,
+    init: function() {
+      window.AudioContext = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AudioContext();
+    },
+    playHit: function() {
+      if(!this.ctx) this.init(); if(this.ctx.state === 'suspended') this.ctx.resume();
+      const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(440, this.ctx.currentTime); 
+      osc.frequency.exponentialRampToValueAtTime(880, this.ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    },
+    playMiss: function() {
+      if(!this.ctx) this.init(); if(this.ctx.state === 'suspended') this.ctx.resume();
+      const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.start(); osc.stop(this.ctx.currentTime + 0.2);
+    }
+  };
+
+  const videoElement = document.getElementsByClassName('input_video')[0];
+  const canvasElement = document.getElementsByClassName('output_canvas')[0];
+  const ctx = canvasElement.getContext('2d');
+  
+  const loadingPanel = document.getElementById('loading-panel');
+  const waitingPanel = document.getElementById('waiting-panel');
+  const countdownEl = document.getElementById('countdown');
+  const gameOverPanel = document.getElementById('game-over-panel');
+  const scoreEl = document.getElementById('score');
+  const timeEl = document.getElementById('time');
+  const comboText = document.getElementById('combo-text');
+  const judgeText = document.getElementById('judge-text');
+
+  let state = 'LOADING'; 
+  let score = 0;
+  let timeLeft = 60;
+  let combo = 0;
+  
+  let notes = [];
+  let noteSpeed = 6; 
+  let spawnTimer = 0;
+  let lastSpawnDir = null; 
+  
+  const DIRECTIONS = ['LEFT', 'UP', 'DOWN', 'RIGHT'];
+  const DIR_ICONS = {'LEFT':'⬅️', 'UP':'⬆️', 'DOWN':'⬇️', 'RIGHT':'➡️'};
+  let currentGesture = null; 
+  let isModelLoaded = false;
+
+  // UNPKG Fix
+  const hands = new Hands({locateFile: (file) => `https://unpkg.com/@mediapipe/hands/${file}`});
+  hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+  hands.onResults((results) => {
+    canvasElement.width = window.innerWidth; canvasElement.height = window.innerHeight;
+    const W = canvasElement.width; const H = canvasElement.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if(!isModelLoaded) {
+        isModelLoaded = true;
+        state = 'WAITING_HAND';
+        loadingPanel.classList.add('hidden');
+        waitingPanel.classList.remove('hidden');
+        SoundManager.init();
+    }
+
+    let detected = false;
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      detected = true;
+      const landmarks = results.multiHandLandmarks[0];
+      drawSkeleton(landmarks, W, H);
+      currentGesture = detectVDirection(landmarks, W, H);
+      
+      if(currentGesture) {
+          drawVHighlight(landmarks, W, H);
+          const wrist = mapCoordinates(landmarks[0], videoElement, W, H);
+          ctx.font = "bold 40px Arial";
+          ctx.fillStyle = "#00f2ff";
+          ctx.fillText(DIR_ICONS[currentGesture], wrist.x, wrist.y - 60);
+          highlightTargetIcon(currentGesture);
+      } else {
+          resetTargetIcons();
+      }
+    } else {
+      currentGesture = null;
+      resetTargetIcons();
+    }
+
+    if (state === 'WAITING_HAND') {
+        if (detected) startCountdown();
+    } else if (state === 'PLAYING') {
+        updateGame(W, H);
+    }
+  });
+
+  const camera = new Camera(videoElement, {
+    onFrame: async () => { if(videoElement.videoWidth) await hands.send({image: videoElement}); },
+    width: 1280, height: 720
+  });
+  camera.start();
+
+  function startCountdown() {
+    state = 'COUNTDOWN';
+    waitingPanel.classList.add('hidden');
+    countdownEl.classList.remove('hidden');
+    let count = 3;
+    countdownEl.innerText = count;
+    let timer = setInterval(() => {
+        count--;
+        if(count > 0) { countdownEl.innerText = count; } 
+        else { clearInterval(timer); countdownEl.classList.add('hidden'); startGame(); }
+    }, 1000);
+  }
+
+  function startGame() {
+    state = 'PLAYING';
+    score = 0; timeLeft = 60; combo = 0; notes = [];
+    scoreEl.innerText = score;
+    lastSpawnDir = null;
+    let gameTimer = setInterval(() => {
+        if(state !== 'PLAYING') { clearInterval(gameTimer); return; }
+        timeLeft--;
+        timeEl.innerText = timeLeft;
+        if(timeLeft <= 0) endGame();
+    }, 1000);
+  }
+
+  function resetGame() {
+      gameOverPanel.classList.add('hidden');
+      state = 'WAITING_HAND';
+      waitingPanel.classList.remove('hidden');
+  }
+
+  function updateGame(W, H) {
+    const now = Date.now();
+    const judgeY = H - 100; 
+    if (now - spawnTimer > 800) { 
+        let dir;
+        do { dir = DIRECTIONS[Math.floor(Math.random() * 4)]; } while (dir === lastSpawnDir); 
+        lastSpawnDir = dir;
+        let xPercent = 0.5;
+        if(dir === 'LEFT') xPercent = 0.2; if(dir === 'UP') xPercent = 0.4;
+        if(dir === 'DOWN') xPercent = 0.6; if(dir === 'RIGHT') xPercent = 0.8;
+        notes.push({ dir: dir, x: W * xPercent, y: -50, active: true });
+        spawnTimer = now;
+    }
+    for (let i = 0; i < notes.length; i++) {
+        let n = notes[i];
+        if (!n.active) continue;
+        n.y += noteSpeed; 
+        ctx.font = "60px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "white"; ctx.fillText(DIR_ICONS[n.dir], n.x, n.y);
+        if (n.y > H) {
+            n.active = false; triggerJudge("MISS", "gray"); combo = 0; updateComboUI(); SoundManager.playMiss();
+        }
+        if (n.active && Math.abs(n.y - judgeY) < 60) {
+            if (currentGesture === n.dir) {
+                n.active = false; score += 100 + (combo * 10); scoreEl.innerText = score;
+                combo++; updateComboUI(); triggerJudge("PERFECT", "#00f2ff"); SoundManager.playHit();
+                ctx.beginPath(); ctx.arc(n.x, n.y, 50, 0, 2*Math.PI); ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 5; ctx.stroke();
+            }
+        }
+    }
+  }
+
+  function detectVDirection(landmarks, W, H) {
+      const wrist = landmarks[0];
+      const indexTip = landmarks[8];
+      const middleTip = landmarks[12];
+      const ringTip = landmarks[16];
+      const dIndex = dist(wrist, indexTip);
+      const dMiddle = dist(wrist, middleTip);
+      const dRing = dist(wrist, ringTip);
+      
+      if (dIndex > dRing * 1.5 && dMiddle > dRing * 1.5) {
+          const midX = (indexTip.x + middleTip.x) / 2;
+          const midY = (indexTip.y + middleTip.y) / 2;
+          const dx = midX - wrist.x;
+          const dy = midY - wrist.y;
+          const angle = Math.atan2(dy, dx); 
+          const deg = angle * 180 / Math.PI;
+          if (deg > -45 && deg < 45) return 'RIGHT'; 
+          if (deg >= 45 && deg < 135) return 'DOWN';
+          if (deg >= 135 || deg <= -135) return 'LEFT'; 
+          if (deg > -135 && deg < -45) return 'UP';
+      }
+      return null;
+  }
+
+  function drawVHighlight(landmarks, W, H) {
+      const wrist = mapCoordinates(landmarks[0], videoElement, W, H);
+      const indexTip = mapCoordinates(landmarks[8], videoElement, W, H);
+      const middleTip = mapCoordinates(landmarks[12], videoElement, W, H);
+      const indexMcp = mapCoordinates(landmarks[5], videoElement, W, H);
+      const middleMcp = mapCoordinates(landmarks[9], videoElement, W, H);
+      ctx.save(); ctx.lineWidth = 8; ctx.strokeStyle = "#00f2ff"; ctx.shadowBlur = 15; ctx.shadowColor = "#00f2ff"; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(wrist.x, wrist.y); ctx.lineTo(indexMcp.x, indexMcp.y); ctx.lineTo(indexTip.x, indexTip.y);
+      ctx.moveTo(wrist.x, wrist.y); ctx.lineTo(middleMcp.x, middleMcp.y); ctx.lineTo(middleTip.x, middleTip.y); ctx.stroke(); ctx.restore();
+  }
+
+  function highlightTargetIcon(dir) { resetTargetIcons(); const el = document.getElementById(`icon-${dir}`); if(el) el.classList.add('active'); }
+  function resetTargetIcons() { DIRECTIONS.forEach(d => document.getElementById(`icon-${d}`).classList.remove('active')); }
+  function dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+  function triggerJudge(text, color) { judgeText.innerText = text; judgeText.style.color = color; judgeText.style.animation = 'none'; judgeText.offsetHeight; judgeText.style.animation = 'pop 0.2s'; setTimeout(() => { judgeText.innerText = ""; }, 500); }
+  function updateComboUI() { if (combo > 1) { comboText.innerText = combo + " COMBO"; comboText.classList.remove('hidden'); } else { comboText.classList.add('hidden'); } }
+  function endGame() { state = 'GAMEOVER'; document.getElementById('final-score').innerText = score; gameOverPanel.classList.remove('hidden'); }
+  function mapCoordinates(point, video, canvasW, canvasH) {
+    const videoW = video.videoWidth || 1280; const videoH = video.videoHeight || 720;
+    const videoAspect = videoW / videoH; const screenAspect = canvasW / canvasH;
+    let scale, offsetX, offsetY;
+    if (screenAspect > videoAspect) {
+        scale = canvasW / videoW; const visibleVideoH = canvasH / scale; offsetY = (videoH - visibleVideoH) / 2; offsetX = 0;
+    } else {
+        scale = canvasH / videoH; const visibleVideoW = canvasW / scale; offsetX = (videoW - visibleVideoW) / 2; offsetY = 0;
+    }
+    const pixelX = point.x * videoW; const pixelY = point.y * videoH;
+    const finalX = (pixelX - offsetX) * scale; const finalY = (pixelY - offsetY) * scale;
+    return { x: finalX, y: finalY };
+  }
+  function drawSkeleton(landmarks, W, H) {
+    ctx.save(); ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"; ctx.lineWidth = 2;
+    for (const connection of HAND_CONNECTIONS) {
+        const p1 = landmarks[connection[0]]; const p2 = landmarks[connection[1]];
+        const c1 = mapCoordinates(p1, videoElement, W, H); const c2 = mapCoordinates(p2, videoElement, W, H);
+        ctx.beginPath(); ctx.moveTo(c1.x, c1.y); ctx.lineTo(c2.x, c2.y); ctx.stroke();
+    }
+    ctx.restore();
+  }
+</script>
+</body>
+</html>

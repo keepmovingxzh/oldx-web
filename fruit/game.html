@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>手势切水果</title>
+  <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body { margin: 0; padding: 0; background-color: #1a1a1a; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; }
+    #game-container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; background: radial-gradient(circle, #2c3e50 0%, #000000 100%); }
+    .input_video { position: absolute; top: 0; left: 0; width: 160px; height: 120px; opacity: 0.6; z-index: 1; transform: scaleX(-1); border-bottom-right-radius: 10px; border: 2px solid rgba(255,255,255,0.2); }
+    .output_canvas { position: absolute; width: 100%; height: 100%; z-index: 2; transform: scaleX(-1); }
+    #ui-layer { position: absolute; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+    
+    /* HUD */
+    #fruit-hud { position: absolute; top: 20px; right: 30px; text-align: right; color: white; display: block; }
+    .hud-value { font-size: 42px; font-weight: 800; font-family: monospace; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
+    .target-display { font-size: 20px; color: #f1c40f; margin-top: 5px; }
+    .cake-counter { font-size: 24px; color: #ff9ff3; margin-top: 10px; transition: 0.3s; }
+    .cake-counter.full { color: #fab1a0; font-weight: bold; transform: scale(1.1); }
+
+    /* 暂停按钮 */
+    #pause-btn {
+        position: absolute; top: 20px; left: 180px; /* 躲开左上角摄像头画面 */
+        pointer-events: auto; z-index: 15;
+        background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.3);
+        color: white; padding: 10px 20px; font-size: 18px; border-radius: 30px;
+        cursor: pointer; transition: 0.3s; backdrop-filter: blur(5px);
+        display: flex; align-items: center; gap: 5px;
+    }
+    #pause-btn:hover { background: rgba(255,255,255,0.3); transform: scale(1.05); }
+
+    /* 游戏内覆盖层样式 */
+    .menu-overlay { 
+        position: absolute; width: 100%; height: 100%; z-index: 20; 
+        background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column; 
+        justify-content: center; align-items: center; color: white; 
+        backdrop-filter: blur(5px); pointer-events: auto; 
+    }
+    .hidden { display: none !important; }
+    
+    .btn { 
+        padding: 15px 40px; font-size: 24px; margin: 10px; width: auto; min-width: 200px;
+        background: linear-gradient(45deg, #e67e22, #d35400); color: white; border: none; 
+        border-radius: 50px; cursor: pointer; box-shadow: 0 5px 15px rgba(230, 126, 34, 0.4); 
+        font-weight: bold; transition: transform 0.2s; 
+    }
+    .btn:hover { transform: scale(1.05); }
+    .btn-secret { background: linear-gradient(45deg, #9b59b6, #8e44ad); box-shadow: 0 5px 15px rgba(155, 89, 182, 0.4); animation: pulse 1.5s infinite; }
+    .btn-secondary { background: #7f8c8d; font-size: 20px; box-shadow: none; }
+    .btn-resume { background: linear-gradient(45deg, #2ecc71, #27ae60); box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4); }
+
+    /* 评级样式 */
+    .rank-badge {
+        font-size: 80px; font-weight: 900; margin: 10px 0;
+        text-shadow: 0 0 20px rgba(255,255,255,0.5);
+        animation: pop-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        opacity: 0; transform: scale(0);
+    }
+    .rank-s { color: #e74c3c; text-shadow: 0 0 30px #e74c3c; }
+    .rank-a { color: #f1c40f; text-shadow: 0 0 30px #f1c40f; }
+    .rank-b { color: #2ecc71; text-shadow: 0 0 30px #2ecc71; }
+    
+    @keyframes pop-in { to { opacity: 1; transform: scale(1); } }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <video class="input_video"></video>
+  <canvas class="output_canvas"></canvas>
+
+  <div id="ui-layer">
+    <!-- 暂停按钮 -->
+    <button id="pause-btn" onclick="toggleManualPause()">⏸️ 暂停</button>
+
+    <div id="fruit-hud">
+      <div>SCORE <span id="score-val" class="hud-value">0</span></div>
+      <div id="target-hud" class="target-display hidden">目标: <span id="target-val">0</span></div>
+      <div>TIME <span id="timer-val" class="hud-value">60</span></div>
+      <div class="cake-counter" id="cake-container">🎂 蛋糕: <span id="cake-val">0</span>/5</div>
+    </div>
+  </div>
+
+  <!-- 暂停菜单 -->
+  <div id="pause-overlay" class="menu-overlay hidden">
+    <h2 style="font-size: 50px; margin-bottom: 30px; color: #fff;">⏸️ 游戏暂停</h2>
+    <button class="btn btn-resume" onclick="resumeManualPause()">▶️ 继续游戏</button>
+    <button class="btn btn-secondary" onclick="returnToMenu()">🏠 退出游戏</button>
+  </div>
+
+  <!-- 隐藏关卡确认 -->
+  <div id="secret-menu" class="menu-overlay hidden">
+    <h1 style="color: #ff9ff3;">🎂 隐藏入口开启! 🎂</h1>
+    <p style="font-size: 22px; margin-bottom: 30px;" id="secret-desc">次元壁破裂了...</p>
+    <div>
+        <button class="btn btn-secondary" onclick="resumeGame()">继续切水果</button>
+        <button class="btn btn-secret" onclick="goToSecretLevel()">进入隐藏关卡</button>
+    </div>
+  </div>
+
+  <!-- 结束菜单 -->
+  <div id="game-over-screen" class="menu-overlay hidden">
+    <h2 id="go-title" style="font-size: 50px; margin-bottom: 20px;">游戏结束</h2>
+    <div style="font-size: 30px; margin-bottom: 20px;">最终得分: <span id="final-score" style="color: gold;">0</span></div>
+    
+    <!-- 自定义模式专属结果 -->
+    <div id="custom-result" class="hidden" style="margin-bottom: 20px; text-align: center;">
+        <div id="rank-badge" class="rank-badge"></div>
+        <div id="custom-msg" style="font-size: 24px; margin: 10px 0;"></div>
+        <div style="font-size: 18px; color: #ccc; margin-top: 5px;">目标: <span id="go-target"></span></div>
+    </div>
+
+    <div id="go-reason" style="color: #ff6b6b; margin-bottom: 30px; font-size: 20px;"></div>
+    <button class="btn" onclick="returnToMenu()">返回主菜单</button>
+  </div>
+</div>
+
+<script>
+  const urlParams = new URLSearchParams(window.location.search);
+  const gameMode = urlParams.get('mode') || 'NORMAL';
+  let customTime = parseInt(urlParams.get('time')) || 60;
+  let customBombRate = parseFloat(urlParams.get('bomb')) || 0.5;
+  let customCakeRate = parseFloat(urlParams.get('cake')) || 0.5;
+  let customTargetScore = parseInt(urlParams.get('target')) || 0;
+
+  const SoundManager = {
+    ctx: null,
+    init: function() {
+      if (!this.ctx) {
+        window.AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+    },
+    playSlice: function() {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    },
+    playBomb: function() {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+      osc.type = 'square'; osc.frequency.setValueAtTime(100, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.start(); osc.stop(this.ctx.currentTime + 0.5);
+    }
+  };
+
+  const videoElement = document.getElementsByClassName('input_video')[0];
+  const canvasElement = document.getElementsByClassName('output_canvas')[0];
+  const ctx = canvasElement.getContext('2d');
+  
+  let currentState = 'PLAYING'; 
+  
+  let handResults = null;
+  let handPos = { x: -1, y: -1 };
+  
+  let score = 0;
+  let timeLeft = 60;
+  let timerRef = null;
+  let cakeCount = 0;
+  let fruits = [];
+  let particles = [];
+  let lastSpawnTime = 0;
+  let secretUnlocked = false;
+
+  const FRUIT_GRAVITY = 0.2;
+  const FRUIT_TYPES = ['🍎','🍊','🍉','🥝','🥥','🍇'];
+  const BOMB_TYPE = { icon: '💣', type: 'bomb' };
+  const CAKE_TYPE = { icon: '🎂', type: 'cake' };
+
+  const hands = new Hands({locateFile: (file) => `https://unpkg.com/@mediapipe/hands/${file}`});
+  hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+  hands.onResults((results) => { handResults = results; gameLoop(); });
+
+  const camera = new Camera(videoElement, {
+    onFrame: async () => { await hands.send({image: videoElement}); },
+    width: 1280, height: 720
+  });
+  
+  window.onload = function() {
+      initGame();
+      camera.start();
+  };
+
+  function initGame() {
+    SoundManager.init();
+    if(gameMode === 'CUSTOM') {
+        timeLeft = customTime;
+        document.getElementById('target-hud').classList.remove('hidden');
+        document.getElementById('target-val').innerText = customTargetScore;
+    } else {
+        timeLeft = 60;
+        document.getElementById('target-hud').classList.add('hidden');
+        customBombRate = 0.15; customCakeRate = 0.1;
+    }
+    score = 0; cakeCount = 0; secretUnlocked = false;
+    fruits = []; particles = [];
+    updateUI();
+    if (timerRef) clearInterval(timerRef);
+    timerRef = setInterval(() => {
+      if (currentState === 'PLAYING') {
+        timeLeft--; updateUI();
+        if (timeLeft <= 0) gameOver('时间耗尽');
+      }
+    }, 1000);
+  }
+
+  // === 暂停功能 ===
+  function toggleManualPause() {
+      if (currentState === 'PLAYING') {
+          currentState = 'MANUAL_PAUSED';
+          document.getElementById('pause-overlay').classList.remove('hidden');
+          document.getElementById('pause-btn').style.display = 'none'; // 暂停时隐藏按钮
+      }
+  }
+
+  function resumeManualPause() {
+      if (currentState === 'MANUAL_PAUSED') {
+          currentState = 'PLAYING';
+          document.getElementById('pause-overlay').classList.add('hidden');
+          document.getElementById('pause-btn').style.display = 'flex';
+      }
+  }
+
+  function returnToMenu() { window.location.href = 'index.html'; }
+
+  function gameOver(reason) {
+    currentState = 'GAMEOVER';
+    clearInterval(timerRef);
+    document.getElementById('fruit-hud').style.display = 'none';
+    document.getElementById('pause-btn').style.display = 'none';
+    
+    const gameOverScreen = document.getElementById('game-over-screen');
+    gameOverScreen.classList.remove('hidden');
+    
+    document.getElementById('final-score').innerText = score;
+    document.getElementById('go-reason').innerText = reason;
+    document.getElementById('go-title').innerText = "游戏结束";
+    document.getElementById('go-title').style.color = "#f39c12";
+    document.getElementById('custom-result').classList.add('hidden');
+
+    if(gameMode === 'CUSTOM') {
+        document.getElementById('custom-result').classList.remove('hidden');
+        document.getElementById('go-target').innerText = customTargetScore;
+        const rankBadge = document.getElementById('rank-badge');
+        const customMsg = document.getElementById('custom-msg');
+        
+        if(score >= customTargetScore) {
+            document.getElementById('go-title').innerText = "🎉 挑战成功!";
+            document.getElementById('go-title').style.color = "#2ecc71";
+            const ratio = score / customTargetScore;
+            if (ratio >= 1.5) { rankBadge.innerText = "S"; rankBadge.className = "rank-badge rank-s"; customMsg.innerText = "传说级表现！"; } 
+            else if (ratio >= 1.2) { rankBadge.innerText = "A"; rankBadge.className = "rank-badge rank-a"; customMsg.innerText = "大师级操作！"; } 
+            else { rankBadge.innerText = "B"; rankBadge.className = "rank-badge rank-b"; customMsg.innerText = "挑战完成！"; }
+        } else {
+            document.getElementById('go-title').innerText = "💔 挑战失败";
+            document.getElementById('go-title').style.color = "#e74c3c";
+            rankBadge.innerText = "";
+            customMsg.innerText = "差一点！再试一次？";
+        }
+    }
+  }
+
+  function pauseGame() {
+    currentState = 'SECRET_PAUSED'; // 区别于手动暂停
+    let desc = "";
+    if (gameMode === 'NORMAL') desc = "是否进入贪吃蛇世界？";
+    else if (gameMode === 'SIMPLE') desc = "是否进入手指炫舞舞台？";
+    else if (gameMode === 'MYSTERY') desc = "密码正确... 正在连接扫雷系统...";
+    document.getElementById('secret-desc').innerText = desc;
+    document.getElementById('secret-menu').classList.remove('hidden');
+    document.getElementById('pause-btn').style.display = 'none';
+  }
+
+  function resumeGame() {
+    currentState = 'PLAYING';
+    document.getElementById('secret-menu').classList.add('hidden');
+    document.getElementById('pause-btn').style.display = 'flex';
+    timeLeft += 10; secretUnlocked = true; updateUI();
+  }
+
+  function goToSecretLevel() {
+    if (gameMode === 'NORMAL') window.location.href = 'snake.html';
+    else if (gameMode === 'SIMPLE') window.location.href = 'dance.html';
+    else if (gameMode === 'MYSTERY') window.location.href = 'minesweeper.html';
+  }
+
+  function updateUI() {
+    document.getElementById('score-val').innerText = score;
+    document.getElementById('timer-val').innerText = timeLeft;
+    document.getElementById('cake-val').innerText = cakeCount;
+    if (cakeCount >= 5) document.getElementById('cake-container').classList.add('full');
+  }
+
+  function gameLoop() {
+    canvasElement.width = window.innerWidth; canvasElement.height = window.innerHeight;
+    const W = canvasElement.width; const H = canvasElement.height;
+    ctx.clearRect(0, 0, W, H);
+    
+    if (handResults && handResults.multiHandLandmarks && handResults.multiHandLandmarks.length > 0) {
+        const landmarks = handResults.multiHandLandmarks[0];
+        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: 'rgba(0, 255, 0, 0.3)', lineWidth: 2});
+        const indexTip = landmarks[8];
+        handPos = { x: indexTip.x, y: indexTip.y };
+        const sx = handPos.x * W; const sy = handPos.y * H;
+        ctx.shadowBlur = 20; ctx.shadowColor = "#00f2ff"; ctx.fillStyle = "white";
+        ctx.beginPath(); ctx.arc(sx, sy, 10, 0, 2 * Math.PI); ctx.fill(); ctx.shadowBlur = 0;
+    } else {
+        handPos = { x: -1, y: -1 };
+    }
+
+    if (currentState === 'PLAYING') {
+      updateLogic(W, H);
+    } else if (currentState === 'SECRET_PAUSED' || currentState === 'MANUAL_PAUSED') {
+      ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0,0,W,H);
+      fruits.forEach(f => drawFruit(f)); 
+    } else if (currentState === 'GAMEOVER') {
+        updateParticles(W, H);
+    }
+  }
+
+  function updateLogic(W, H) {
+    if (Date.now() - lastSpawnTime > 800) { spawnFruit(W, H); lastSpawnTime = Date.now(); }
+    
+    for (let i = fruits.length - 1; i >= 0; i--) {
+      let f = fruits[i];
+      f.x += f.vx; f.y += f.vy; f.vy += FRUIT_GRAVITY; f.rotation += f.rotSpeed;
+      drawFruit(f);
+      
+      if (handPos.x !== -1) {
+        const dist = Math.hypot((handPos.x * W) - f.x, (handPos.y * H) - f.y);
+        if (dist < f.size / 1.5) {
+          if (f.type === 'bomb') {
+            SoundManager.playBomb(); 
+            gameOver('切到炸弹 💥'); 
+            return;
+          } else {
+            SoundManager.playSlice();
+            if (f.type === 'cake') {
+              let prevScore = score;
+              score += 50; cakeCount++;
+              createSliceEffect(f); updateUI(); fruits.splice(i, 1);
+              
+              if (!secretUnlocked) {
+                  if (gameMode === 'NORMAL' && cakeCount >= 5) { pauseGame(); return; }
+                  else if (gameMode === 'SIMPLE' && cakeCount >= 5) { pauseGame(); return; }
+                  else if (gameMode === 'MYSTERY' && cakeCount === 5) {
+                      if (prevScore < 500 && score >= 500) { pauseGame(); return; }
+                  }
+              }
+            } else {
+              score += 10; createSliceEffect(f); updateUI(); fruits.splice(i, 1);
+            }
+          }
+          continue;
+        }
+      }
+      if (f.y > H + 100) fruits.splice(i, 1);
+    }
+    updateParticles(W, H);
+  }
+
+  function spawnFruit(W, H) {
+    const r = Math.random();
+    let item;
+    let bombProb = 0.15; let cakeProb = 0.1;
+    if(gameMode === 'CUSTOM') { bombProb = customBombRate * 0.3; cakeProb = customCakeRate * 0.4; } 
+    else if(gameMode === 'SIMPLE') { bombProb = 0; }
+
+    if (r < bombProb) item = BOMB_TYPE;
+    else if (r < bombProb + cakeProb) item = CAKE_TYPE;
+    else item = { icon: FRUIT_TYPES[Math.floor(Math.random() * FRUIT_TYPES.length)], type: 'fruit' };
+    
+    if (item.type === 'bomb' && (gameMode === 'SIMPLE' || (gameMode === 'CUSTOM' && customBombRate === 0))) item = { icon: '🍎', type: 'fruit' };
+    if (item.type === 'cake' && cakeCount >= 5 && gameMode !== 'CUSTOM') item = { icon: '🍎', type: 'fruit' };
+
+    const startX = W * 0.1 + Math.random() * W * 0.8;
+    fruits.push({
+      ...item, x: startX, y: H + 50,
+      vx: (W/2 - startX) * 0.01 + (Math.random() - 0.5), vy: -(18 + Math.random() * 7),
+      rotation: 0, rotSpeed: (Math.random()-0.5)*0.2, size: 60
+    });
+  }
+
+  function drawFruit(f) {
+    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.rotation);
+    ctx.font = `${f.size}px Arial`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(f.icon, 0, 0); ctx.restore();
+  }
+  function createSliceEffect(f) { for (let i=0; i<2; i++) particles.push({ icon: f.icon, x: f.x, y: f.y, vx: (i===0?-1:1)*4 + f.vx, vy: -5, rot: f.rotation, rotSpeed: (i===0?-1:1)*0.1, life: 40, half: i }); }
+  function updateParticles(W, H) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      let p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.5; p.rot += p.rotSpeed; p.life--;
+      ctx.save(); ctx.globalAlpha = p.life / 40; ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.beginPath(); ctx.rect(p.half===0 ? -30 : 0, -30, 30, 60); ctx.clip();
+      ctx.font = "60px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(p.icon, 0, 0); ctx.restore();
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+</script>
+</body>
+</html>

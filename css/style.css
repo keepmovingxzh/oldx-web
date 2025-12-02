@@ -1,0 +1,231 @@
+:root {
+    --bg-color: #0a0a12;
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --text-main: #ffffff;
+    --text-sub: #a0a0a0;
+    --accent-color: #00f3ff;
+    --accent-secondary: #bc13fe;
+    --font-title: 'Orbitron', sans-serif;
+    --font-body: 'Noto Sans SC', sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+    background-image: 
+        radial-gradient(circle at 10% 20%, rgba(0, 243, 255, 0.1) 0%, transparent 20%),
+        radial-gradient(circle at 90% 80%, rgba(188, 19, 254, 0.1) 0%, transparent 20%);
+    /* 禁止触摸滚动，防止手势操作时页面乱动 */
+    touch-action: none; 
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+    width: 100%;
+    z-index: 1;
+    position: relative;
+}
+
+.main-header {
+    text-align: center;
+    margin-top: 4rem;
+    margin-bottom: 3rem;
+    animation: fadeInDown 1s ease-out;
+}
+
+.glow-text {
+    font-family: var(--font-title);
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    background: linear-gradient(90deg, var(--accent-color), #fff, var(--accent-secondary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 20px rgba(0, 243, 255, 0.3);
+}
+
+.subtitle {
+    font-size: 1.2rem;
+    color: var(--text-sub);
+    letter-spacing: 1px;
+    margin-bottom: 2rem;
+}
+
+/* Neon Button */
+.neon-btn {
+    background: transparent;
+    border: 2px solid var(--accent-color);
+    color: var(--accent-color);
+    padding: 10px 25px;
+    font-family: var(--font-title);
+    font-size: 1rem;
+    border-radius: 50px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.neon-btn:hover {
+    background: var(--accent-color);
+    color: #000;
+    box-shadow: 0 0 20px rgba(0, 243, 255, 0.6);
+}
+
+.status-hidden {
+    opacity: 0;
+    transition: opacity 0.5s;
+    margin-top: 1rem;
+    color: var(--accent-secondary);
+    font-size: 0.9rem;
+}
+
+.status-visible {
+    opacity: 1;
+}
+
+/* Modules Grid */
+.modules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+    padding: 1rem;
+    position: relative; /* Important for absolute positioning switching */
+    min-height: 400px;
+}
+
+/* Card Styles */
+.module-card {
+    position: relative;
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    border-radius: 20px;
+    padding: 3rem 2rem;
+    text-decoration: none;
+    color: var(--text-main);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: transform 0.1s ease, box-shadow 0.3s ease; /* Reduced transform duration for smoother drag */
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    user-select: none; /* Prevent text selection during drag */
+}
+
+/* 当进入手势模式时，卡片变为绝对定位，这里通过JS控制style，但可以加个类 */
+.module-card.floating {
+    position: absolute;
+    margin: 0;
+    transition: none; /* 拖拽时移除过渡，防止延迟 */
+    z-index: 10;
+    width: 300px; /* 固定宽度，防止Grid解除后变形 */
+}
+
+.module-card:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5), 
+                0 0 20px rgba(0, 243, 255, 0.2);
+}
+
+/* 被抓取时的样式 */
+.module-card.grabbed {
+    box-shadow: 0 0 30px var(--accent-secondary);
+    border-color: var(--accent-secondary);
+    z-index: 100;
+    cursor: grabbing;
+}
+
+.icon {
+    font-size: 4rem;
+    margin-bottom: 1.5rem;
+}
+
+.module-card h2 {
+    font-family: var(--font-title);
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--accent-color);
+}
+
+.module-card p {
+    font-size: 0.9rem;
+    color: var(--text-sub);
+}
+
+.main-footer {
+    text-align: center;
+    margin-top: 4rem;
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 0.8rem;
+}
+
+/* Virtual Hand Cursor */
+#hand-cursor {
+    position: fixed;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: var(--accent-secondary);
+    border: 2px solid #fff;
+    pointer-events: none; /* Let clicks pass through */
+    z-index: 9999;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 15px var(--accent-secondary);
+    transition: background-color 0.2s, width 0.2s, height 0.2s;
+}
+
+.cursor-hidden {
+    display: none;
+}
+
+/* Pinching State for Cursor */
+#hand-cursor.pinching {
+    background-color: var(--accent-color);
+    width: 10px;
+    height: 10px;
+    box-shadow: 0 0 25px var(--accent-color);
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.neon-link {
+    display: inline-block;
+    padding: 1rem 2rem;
+    margin-top: 2rem;
+    color: #fff;
+    text-decoration: none;
+    font-family: var(--font-title);
+    border: 1px solid var(--accent-secondary);
+    border-radius: 50px;
+    background: rgba(188, 19, 254, 0.1);
+    transition: all 0.3s ease;
+    backdrop-filter: blur(5px);
+}
+
+.neon-link:hover {
+    background: var(--accent-secondary);
+    box-shadow: 0 0 20px var(--accent-secondary);
+    transform: scale(1.05);
+}

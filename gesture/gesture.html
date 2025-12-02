@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>粒子特效</title>
+    <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+        }
+        .hud {
+            position: absolute; top: 20px; left: 20px;
+            color: #00ff88; font-size: 18px; font-weight: bold;
+            text-shadow: 0 0 8px rgba(0,255,136,0.8);
+            background: rgba(0,0,0,0.7); padding: 15px 25px; border-radius: 12px;
+            border: 1px solid rgba(0,255,136,0.3);
+            backdrop-filter: blur(4px);
+        }
+        .back-btn { 
+            position: fixed; top: 20px; right: 20px; pointer-events: auto;
+            padding: 10px 20px; background: rgba(255,255,255,0.15); color: white;
+            border: 1px solid rgba(255,255,255,0.3); border-radius: 20px; cursor: pointer;
+        }
+        .hint {
+            position: absolute; bottom: 30px; width: 100%; text-align: center;
+            color: rgba(255,255,255,0.6); font-size: 15px; letter-spacing: 1px;
+        }
+        #cd-bar {
+            width: 0%; height: 4px; background: #00ff88; margin-top: 8px; 
+            transition: width 0.1s linear;
+            box-shadow: 0 0 10px #00ff88;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <div class="hud">
+            <div id="status-text">系统就绪</div>
+            <div id="cd-bar"></div>
+        </div>
+        <button class="back-btn" onclick="window.location.href='index.html'">🏠 返回</button>
+        <div class="hint">
+            1-5: 数字 | ✊(0): 黑洞聚能 | 🤟: 蛛丝风暴 | 👌: 实体光盾 | 👆: 画圈倒计时
+        </div>
+    </div>
+
+    <video id="input_video" style="display:none"></video>
+    <canvas id="output_canvas"></canvas>
+
+    <script>
+        // --- 核心配置 ---
+        const TEXT_PARTICLE_COUNT = 1000; 
+        const EFFECT_PARTICLE_LIMIT = 6000; 
+        const COOLDOWN_TIME = 2000; 
+
+        // 画圈配置
+        const CIRCLE_TIME_LIMIT = 1500;
+        const CIRCLE_MIN_SIZE = 150;
+        const CIRCLE_CLOSURE_DIST = 100;
+
+        // --- DOM ---
+        const videoElement = document.getElementById('input_video');
+        const canvas = document.getElementById('output_canvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status-text');
+        const cdBar = document.getElementById('cd-bar');
+
+        // --- 状态 ---
+        let lastTriggerTime = 0;
+        let isCountingDown = false;
+        
+        let textParticles = []; 
+        let effectParticles = []; 
+        let particleState = 'idle';
+        let shieldPulse = 0;
+
+        // 彩蛋状态
+        let gestureHistory = []; // 记录最近的数字
+
+        // 画圈
+        let strokePoints = [];
+        let strokeStartTime = 0;
+
+        // --- 1. 数字粒子 ---
+        class TextParticle {
+            constructor() { this.reset(); this.active = false; }
+            reset() {
+                this.x = canvas.width/2; this.y = canvas.height/2;
+                this.vx = 0; this.vy = 0;
+                this.targetX = 0; this.targetY = 0;
+                this.size = 0; this.alpha = 0; this.color = '#fff';
+            }
+            activate(tx, ty, color) {
+                this.active = true;
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.targetX = tx; this.targetY = ty;
+                this.color = color;
+                this.size = Math.random() * 4 + 2;
+                this.alpha = 1;
+            }
+            update() {
+                if (!this.active) return;
+                if (particleState === 'gathering') {
+                    this.x += (this.targetX - this.x) * 0.15;
+                    this.y += (this.targetY - this.y) * 0.15;
+                } else if (particleState === 'holding') {
+                    this.x = this.targetX + (Math.random()-0.5)*3;
+                    this.y = this.targetY + (Math.random()-0.5)*3;
+                } else if (particleState === 'exploding') {
+                    this.x += this.vx; this.y += this.vy;
+                    this.vx *= 0.98; this.vy *= 0.98;
+                    this.alpha -= 0.02;
+                    if (this.alpha <= 0) this.active = false;
+                }
+            }
+            draw() {
+                if (!this.active) return;
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+            explode() {
+                const angle = Math.random() * Math.PI * 2;
+                const force = Math.random() * 15 + 5;
+                this.vx = Math.cos(angle) * force;
+                this.vy = Math.sin(angle) * force;
+            }
+        }
+
+        // --- 2. 特效粒子 ---
+        class EffectParticle {
+            constructor(x, y, type, color, target = null) {
+                this.x = x; this.y = y;
+                this.type = type; 
+                this.color = color;
+                this.active = true;
+                this.target = target;
+                
+                if (type === 'stream') {
+                    const angle = -Math.PI/2 + (Math.random()-0.5) * 0.6; 
+                    const speed = Math.random() * 25 + 10; 
+                    this.vx = Math.cos(angle) * speed;
+                    this.vy = Math.sin(angle) * speed;
+                    this.size = Math.random() * 4 + 1;
+                    this.life = 1.0;
+                    this.decay = Math.random() * 0.02 + 0.01;
+                } else if (type === 'shield') {
+                    this.angle = Math.random() * Math.PI * 2;
+                    this.radiusOffset = (Math.random()-0.5) * 15; 
+                    this.size = Math.random() * 3 + 1;
+                    this.life = 1.0;
+                    this.decay = Math.random() * 0.05 + 0.02; 
+                } else if (type === 'implode') {
+                    this.size = Math.random() * 5 + 2;
+                    this.life = 1.0;
+                    this.decay = 0; 
+                    const dx = target.x - x;
+                    const dy = target.y - y;
+                    const dist = Math.hypot(dx, dy);
+                    this.vx = (dx / dist) * (Math.random() * 20 + 10);
+                    this.vy = (dy / dist) * (Math.random() * 20 + 10);
+                }
+            }
+
+            update() {
+                if (!this.active) return;
+
+                if (this.type === 'stream') {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.vy += 0.8; 
+                    this.life -= this.decay;
+                } 
+                else if (this.type === 'shield') {
+                    const baseR = 90;
+                    const pulse = Math.sin(shieldPulse) * 8;
+                    const r = baseR + pulse + this.radiusOffset;
+                    this.angle += 0.08; 
+                    this.x = this.target.x + Math.cos(this.angle) * r;
+                    this.y = this.target.y + Math.sin(this.angle) * r;
+                    this.life -= this.decay;
+                } 
+                else if (this.type === 'implode') {
+                    const dx = this.target.x - this.x;
+                    const dy = this.target.y - this.y;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist < 30) {
+                        this.active = false; 
+                    } else {
+                        this.x += (dx / dist) * 25; 
+                        this.y += (dy / dist) * 25;
+                    }
+                    this.life -= 0.01;
+                    if(this.life < 0) this.active = false;
+                }
+                
+                if (this.life <= 0) this.active = false;
+            }
+
+            draw() {
+                if (!this.active) return;
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function initTextParticles() {
+            textParticles = [];
+            for(let i=0; i<TEXT_PARTICLE_COUNT; i++) textParticles.push(new TextParticle());
+        }
+
+        function getTextPoints(text) {
+            const osc = document.createElement('canvas');
+            osc.width = canvas.width; osc.height = canvas.height;
+            const osCtx = osc.getContext('2d');
+            osCtx.font = '900 350px Arial';
+            osCtx.textAlign = 'center'; osCtx.textBaseline = 'middle';
+            osCtx.fillStyle = '#fff';
+            osCtx.fillText(text, osc.width/2, osc.height/2);
+            const data = osCtx.getImageData(0,0, osc.width, osc.height).data;
+            const points = [];
+            for(let y=0; y<osc.height; y+=8) {
+                for(let x=0; x<osc.width; x+=8) {
+                    if(data[(y*osc.width+x)*4] > 128) points.push({x,y});
+                }
+            }
+            return points;
+        }
+
+        // --- 触发逻辑 (包含彩蛋检测) ---
+        function triggerNumber(num) {
+            if (isCountingDown) return;
+            const now = Date.now();
+            if (now - lastTriggerTime < COOLDOWN_TIME) return;
+            
+            lastTriggerTime = now;
+            startCooldownAnim();
+            statusEl.innerText = `数字识别: ${num}`;
+            
+            // === 彩蛋逻辑 ===
+            gestureHistory.push(num);
+            if (gestureHistory.length > 3) gestureHistory.shift(); // 只保留最后3个
+            
+            // 检查是否是 5, 2, 0
+            const seq = gestureHistory.join('');
+            if (seq === '520') {
+                statusEl.innerText = "❤️ 触发浪漫彩蛋 ❤️";
+                statusEl.style.color = "#ff0066";
+                setTimeout(() => {
+                    window.location.href = 'surprise.html';
+                }, 1500); // 稍微延迟一下跳转
+            }
+            // ================
+
+            const colors = ['#ff0000', '#ff4500', '#ffd700', '#32cd32', '#00ffff', '#1e90ff'];
+            spawnText(num, colors[parseInt(num)] || 'white');
+        }
+
+        function spawnText(text, color) {
+            const points = getTextPoints(text);
+            textParticles.forEach(p => {
+                if (points.length > 0) {
+                    const pt = points[Math.floor(Math.random()*points.length)];
+                    p.activate(pt.x, pt.y, color);
+                }
+            });
+            particleState = 'gathering';
+            setTimeout(() => particleState = 'holding', 300);
+            setTimeout(() => {
+                particleState = 'exploding';
+                textParticles.forEach(p => { if(p.active) p.explode(); });
+            }, 800);
+        }
+
+        function startCooldownAnim() {
+            cdBar.style.width = '100%';
+            cdBar.style.transition = `width ${COOLDOWN_TIME}ms linear`;
+            void cdBar.offsetWidth; 
+            cdBar.style.width = '0%';
+        }
+
+        function startCountdown() {
+            if (isCountingDown) return;
+            isCountingDown = true;
+            statusEl.innerText = "⚠️ 倒计时启动 ⚠️";
+            statusEl.style.color = '#ff00ff';
+            
+            let count = 10;
+            const run = () => {
+                if (count <= 0) {
+                    isCountingDown = false;
+                    statusEl.innerText = "等待手势...";
+                    statusEl.style.color = '#00ff88';
+                    return;
+                }
+                const color = `hsl(${count * 36}, 100%, 60%)`;
+                spawnText(count.toString(), color);
+                count--;
+                setTimeout(run, 1000);
+            };
+            run();
+        }
+
+        function spawnContinuousEffect(type, target) {
+            let count = 0;
+            let baseColorH = 0;
+
+            if (type === 'stream') {
+                count = 40; 
+            } else if (type === 'shield') {
+                count = 80; 
+                baseColorH = 35; 
+            } else if (type === 'implode') {
+                count = 30; 
+                baseColorH = 270; 
+            }
+
+            for(let i=0; i<count; i++) {
+                if (effectParticles.length > EFFECT_PARTICLE_LIMIT) effectParticles.shift();
+                
+                let col;
+                if (type === 'stream') col = `hsl(${Math.random()*360}, 100%, 60%)`;
+                else if (type === 'shield') col = `hsl(${baseColorH}, 100%, ${50+Math.random()*50}%)`;
+                else if (type === 'implode') col = `hsl(${baseColorH + Math.random()*40}, 100%, 60%)`;
+
+                let sx, sy;
+                if (type === 'implode') {
+                    if (Math.random() > 0.5) {
+                        sx = Math.random() > 0.5 ? 0 : canvas.width;
+                        sy = Math.random() * canvas.height;
+                    } else {
+                        sx = Math.random() * canvas.width;
+                        sy = Math.random() > 0.5 ? 0 : canvas.height;
+                    }
+                } else {
+                    sx = target.x; sy = target.y;
+                }
+
+                effectParticles.push(new EffectParticle(sx, sy, type, col, target));
+            }
+        }
+
+        // --- 主循环 ---
+        function onResults(results) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            ctx.globalCompositeOperation = 'screen';
+            textParticles.forEach(p => { p.update(); p.draw(); });
+
+            shieldPulse += 0.15; 
+            for (let i = effectParticles.length - 1; i >= 0; i--) {
+                let p = effectParticles[i];
+                p.update();
+                p.draw();
+                if (!p.active) effectParticles.splice(i, 1);
+            }
+            ctx.globalCompositeOperation = 'source-over';
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                const palm = { x: (1-lm[9].x)*canvas.width, y: lm[9].y*canvas.height };
+                const wrist = { x: (1-lm[0].x)*canvas.width, y: lm[0].y*canvas.height };
+                const indexTip = { x: (1-lm[8].x)*canvas.width, y: lm[8].y*canvas.height };
+
+                const thumbOut = (1-lm[4].x) > (1-lm[2].x) + 0.03; 
+                const indexOut = lm[8].y < lm[6].y;
+                const midOut = lm[12].y < lm[10].y;
+                const ringOut = lm[16].y < lm[14].y;
+                const pinkyOut = lm[20].y < lm[18].y;
+                const count = [thumbOut, indexOut, midOut, ringOut, pinkyOut].filter(Boolean).length;
+
+                if (count === 1 && indexOut && !isCountingDown) {
+                    const now = Date.now();
+                    if (strokePoints.length === 0) strokeStartTime = now;
+                    else if (now - strokeStartTime > CIRCLE_TIME_LIMIT) strokePoints = [];
+                    strokePoints.push(indexTip);
+                    
+                    ctx.beginPath(); ctx.strokeStyle = 'cyan'; ctx.lineWidth = 4;
+                    if (strokePoints.length > 1) {
+                        ctx.moveTo(strokePoints[0].x, strokePoints[0].y);
+                        for(let p of strokePoints) ctx.lineTo(p.x, p.y);
+                    }
+                    ctx.stroke();
+
+                    if (strokePoints.length > 40) {
+                        const start = strokePoints[0];
+                        const end = strokePoints[strokePoints.length-1];
+                        const dist = Math.hypot(start.x - end.x, start.y - end.y);
+                        let minX=10000, maxX=0;
+                        strokePoints.forEach(p => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); });
+                        if (dist < CIRCLE_CLOSURE_DIST && (maxX-minX) > CIRCLE_MIN_SIZE) {
+                            strokePoints = [];
+                            startCountdown();
+                        }
+                    }
+                } else {
+                    strokePoints = [];
+                }
+
+                if (isCountingDown) return;
+
+                if (thumbOut && indexOut && pinkyOut && !midOut && !ringOut) {
+                    spawnContinuousEffect('stream', wrist);
+                    statusEl.innerText = "特效: 蛛丝风暴";
+                    return;
+                }
+                const pinchDist = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+                if (pinchDist < 0.05 && midOut && ringOut && pinkyOut) {
+                    spawnContinuousEffect('shield', palm);
+                    statusEl.innerText = "特效: 实体光盾";
+                    return;
+                }
+
+                if (count === 0) {
+                    spawnContinuousEffect('implode', palm);
+                    statusEl.innerText = "特效: 黑洞聚能";
+                    // 为了兼容 5-2-0 逻辑，这里也可以把 "0" 视为数字触发，
+                    // 但为了特效不冲突，我们可以手动调用一次 triggerNumber('0') 如果你想让0也参与历史记录
+                    // 鉴于用户习惯，握拳通常是纯特效。
+                    // 如果你想让"5-2-握拳(0)"触发，请解开下面注释，但这会在此处产生数字粒子。
+                    // 更好的方式是只记录逻辑不触发粒子，或者就比"0"
+                    if (Date.now() - lastTriggerTime > COOLDOWN_TIME) {
+                         triggerNumber('0');
+                    }
+                } 
+                else if (Date.now() - lastTriggerTime > COOLDOWN_TIME) {
+                    if (count === 1 && indexOut) triggerNumber('1');
+                    else if (count === 2 && indexOut && midOut) triggerNumber('2');
+                    else if (count === 3 && indexOut && midOut && ringOut) triggerNumber('3');
+                    else if (count === 4 && indexOut && midOut && ringOut && pinkyOut) triggerNumber('4');
+                    else if (count === 5) triggerNumber('5');
+                }
+            }
+        }
+
+        initTextParticles();
+        window.onresize = () => { 
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight; 
+            initTextParticles();
+        };
+        window.onresize();
+
+        const hands = new Hands({locateFile: (file) => `https://unpkg.com/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+        camera.start();
+    </script>
+</body>
+</html>

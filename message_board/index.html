@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>留言板 - Oldx's Space</title>
+    <!-- 复用主页的样式 -->
+    <link rel="stylesheet" href="../css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Noto+Sans+SC:wght@300;500&display=swap" rel="stylesheet">
+    <style>
+        /* 留言板页面的特定样式 */
+        .giscus-container {
+            background: rgba(20, 20, 30, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2rem;
+            margin-top: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            min-height: 500px;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+        }
+        
+        .back-link {
+            display: inline-block;
+            color: var(--accent-color);
+            text-decoration: none;
+            margin-bottom: 1rem;
+            font-family: var(--font-title);
+            font-size: 1.2rem;
+            transition: all 0.3s ease;
+        }
+        
+        .back-link:hover {
+            text-shadow: 0 0 10px var(--accent-color);
+            transform: translateX(-5px);
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-animation"></div>
+
+    <div class="container">
+        <header class="main-header" style="margin-top: 2rem; margin-bottom: 2rem;">
+            <h1 class="glow-text">互动留言板</h1>
+            <p class="subtitle">留下你的足迹，与 Oldx 交流</p>
+        </header>
+
+        <div style="max-width: 800px; margin: 0 auto;">
+            <a href="../index.html" class="back-link">← 返回主页</a>
+            
+            <div class="giscus-container">
+                <!-- 
+                    TODO: 请在此处粘贴你从 https://giscus.app 生成的 script 代码 
+                    例子如下（请不要直接使用，因为 repo-id 是你专属的）：
+                -->
+                
+                <!-- 你的 Giscus 代码应该粘贴在下面 -->
+                <script src="https://giscus.app/client.js"
+                    data-repo="keepmovingxzh/oldx-web"
+                    data-repo-id="R_kgDOQg9EBA"
+                    data-category="Announcements"
+                    data-category-id="DIC_kwDOQg9EBM4CzTAf"
+                    data-mapping="pathname"
+                    data-strict="0"
+                    data-reactions-enabled="1"
+                    data-emit-metadata="0"
+                    data-input-position="top"
+                    data-theme="transparent_dark"
+                    data-lang="zh-CN"
+                    crossorigin="anonymous"
+                    async>
+                </script>
+                <!-- 结束粘贴区域 -->
+                
+                <p style="text-align: center; color: #666; margin-top: 2rem;">
+                    <small>评论系统由 GitHub Discussions 驱动</small>
+                </p>
+            </div>
+        </div>
+
+        <footer class="main-footer">
+            <p>&copy; 2025 Oldx. All Rights Reserved.</p>
+        </footer>
+    </div>
+</body>
+</html>

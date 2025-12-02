@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>手势画板</title>
+    <!-- 引入 MediaPipe -->
+    <script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; background-color: #1a1a1a; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; }
+        
+        #container { position: relative; width: 100vw; height: 100vh; }
+
+        /* 画布层级 */
+        canvas { position: absolute; top: 0; left: 0; }
+        #video_canvas { z-index: 0; transform: scaleX(-1); opacity: 0.6; } /* 视频半透明，突出骨骼 */
+        #bone_canvas { z-index: 1; transform: scaleX(-1); pointer-events: none; } /* 骨骼层，也需要镜像 */
+        #drawing_canvas { z-index: 2; } /* 画作层 */
+        #cursor_canvas { z-index: 3; pointer-events: none; } /* 光标层 */
+
+        /* 提示遮罩 */
+        #overlay-msg {
+            position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 50; color: white; font-size: 2rem; font-weight: bold;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.8); text-align: center;
+            pointer-events: none; transition: opacity 0.5s;
+        }
+
+        /* 状态栏 */
+        #status {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 20; background: rgba(0,0,0,0.7); color: #00ff88;
+            padding: 8px 20px; border-radius: 20px; font-size: 16px; pointer-events: none;
+            border: 1px solid rgba(0,255,136,0.3);
+        }
+
+        /* 底部工具栏 */
+        .toolbar-container {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 10; display: flex; flex-direction: column; gap: 15px; align-items: center;
+        }
+
+        .brush-menu, .main-menu {
+            background: rgba(40, 40, 40, 0.95);
+            padding: 10px 20px; border-radius: 30px;
+            display: flex; gap: 15px; align-items: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .divider { width: 1px; height: 30px; background: rgba(255,255,255,0.2); }
+
+        .btn {
+            width: 50px; height: 50px; border-radius: 50%;
+            background: rgba(255,255,255,0.1);
+            color: white; font-size: 22px; position: relative;
+            cursor: pointer; display: flex; justify-content: center; align-items: center;
+            transition: all 0.2s; overflow: hidden;
+        }
+        
+        .btn:hover { transform: scale(1.1); background: rgba(255,255,255,0.3); }
+        .btn.active { background: rgba(0, 255, 136, 0.3); color: #00ff88; border: 2px solid #00ff88; }
+        .btn-small { width: 40px; height: 40px; font-size: 18px; }
+
+        /* 颜色选择器 */
+        input[type=color] {
+            width: 150%; height: 150%; border: none; background: none;
+            position: absolute; left: -25%; top: -25%; cursor: pointer;
+        }
+
+        /* 悬停动画环 */
+        .progress-ring {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            border-radius: 50%; border: 3px solid transparent;
+            border-top-color: #00ff88; display: none;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <video id="input_video" style="display:none"></video>
+        <canvas id="video_canvas"></canvas>
+        <canvas id="bone_canvas"></canvas> <!-- 骨骼绘制层 -->
+        <canvas id="drawing_canvas"></canvas>
+        <canvas id="cursor_canvas"></canvas>
+    </div>
+
+    <div id="overlay-msg">👈 请先在下方选择一支画笔</div>
+    <div id="status">初始化中...</div>
+
+    <div class="toolbar-container">
+        <!-- 画笔材质 -->
+        <div class="brush-menu">
+            <div class="btn btn-small interactive" id="brush-pen" onclick="selectBrush('pen')" title="钢笔">🖊️<div class="progress-ring"></div></div>
+            <div class="btn btn-small interactive" id="brush-pencil" onclick="selectBrush('pencil')" title="铅笔">✏️<div class="progress-ring"></div></div>
+            <div class="btn btn-small interactive" id="brush-watercolor" onclick="selectBrush('watercolor')" title="水彩">🖌️<div class="progress-ring"></div></div>
+            <div class="btn btn-small interactive" id="brush-marker" onclick="selectBrush('marker')" title="马克笔">🖍️<div class="progress-ring"></div></div>
+        </div>
+
+        <!-- 主控栏 -->
+        <div class="main-menu">
+            <div class="btn interactive">
+                <input type="color" id="colorPicker" value="#ffffff">
+                <div class="progress-ring"></div>
+            </div>
+            
+            <div class="btn interactive" onclick="changeSize(-2)">➖<div class="progress-ring"></div></div>
+            <div class="btn interactive" onclick="changeSize(2)">➕<div class="progress-ring"></div></div>
+
+            <div class="divider"></div>
+
+            <div class="btn interactive active" id="mode-draw" onclick="setMode('draw')">🎨<div class="progress-ring"></div></div>
+            <div class="btn interactive" id="mode-move" onclick="setMode('move')">✋<div class="progress-ring"></div></div>
+
+            <div class="divider"></div>
+
+            <div class="btn interactive" onclick="clearCanvas()">🗑️<div class="progress-ring"></div></div>
+            <div class="btn interactive" onclick="saveCanvas()">💾<div class="progress-ring"></div></div>
+            <div class="btn interactive" onclick="window.location.href='index.html'">🏠<div class="progress-ring"></div></div>
+        </div>
+    </div>
+
+    <script>
+        // --- 核心配置 ---
+        const SMOOTHING_FACTOR = 0.15; // 平滑系数 (0.1-0.3 之间，越小越平滑但延迟越高)
+        const PINCH_THRESHOLD = 0.06; // 捏合判定阈值 (根据手距调整)
+        
+        // --- DOM & Context ---
+        const videoElement = document.getElementById('input_video');
+        const canvases = {
+            vid: document.getElementById('video_canvas').getContext('2d'),
+            bone: document.getElementById('bone_canvas').getContext('2d'),
+            draw: document.getElementById('drawing_canvas').getContext('2d'),
+            cursor: document.getElementById('cursor_canvas').getContext('2d')
+        };
+        const overlayMsg = document.getElementById('overlay-msg');
+        const statusEl = document.getElementById('status');
+
+        // --- 状态变量 ---
+        let state = {
+            mode: 'draw', // draw | move
+            brushType: null, // 初始为 null，必须选择
+            brushSize: 6,
+            color: '#ffffff',
+            isPinching: false,
+            hasStarted: false // 是否已选择画笔
+        };
+
+        // 平滑坐标
+        let currPos = { x: 0, y: 0 }; // 当前平滑后的坐标
+        let rawPos = { x: 0, y: 0 };  // 原始检测坐标
+        let prevPos = { x: 0, y: 0 }; // 上一帧坐标
+
+        // 移动画布偏移量
+        let offset = { x: 0, y: 0 };
+        let startPinchPos = { x: 0, y: 0 };
+
+        // 交互计时器
+        let hoverTimer = null;
+        let hoverTarget = null;
+
+        // 画笔参数
+        const BRUSHES = {
+            pen: { alpha: 1, widthMult: 1, cap: 'round', shadow: 0, name: '钢笔' },
+            pencil: { alpha: 0.9, widthMult: 0.5, cap: 'round', shadow: 0, name: '铅笔' },
+            watercolor: { alpha: 0.15, widthMult: 3, cap: 'round', shadow: 10, name: '水彩' },
+            marker: { alpha: 0.6, widthMult: 2.5, cap: 'square', shadow: 0, name: '马克笔' }
+        };
+
+        // --- 初始化尺寸 ---
+        function resize() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            Object.values(document.querySelectorAll('canvas')).forEach(c => { c.width = w; c.height = h; });
+            canvases.draw.lineJoin = 'round';
+            canvases.draw.lineCap = 'round';
+        }
+        window.onresize = resize;
+        resize();
+
+        // --- 算法工具 ---
+        function lerp(start, end, amt) {
+            return (1 - amt) * start + amt * end;
+        }
+
+        function distance(p1, p2) {
+            return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        }
+
+        // --- 业务逻辑 ---
+        function selectBrush(type) {
+            state.brushType = type;
+            state.hasStarted = true;
+            overlayMsg.style.opacity = 0; // 隐藏提示
+            
+            document.querySelectorAll('.brush-menu .btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`brush-${type}`).classList.add('active');
+            
+            statusEl.innerText = `当前: ${BRUSHES[type].name} | 捏合食指拇指开始书写`;
+        }
+
+        function setMode(m) {
+            state.mode = m;
+            document.querySelectorAll('#mode-draw, #mode-move').forEach(b => b.classList.remove('active'));
+            document.getElementById(`mode-${m}`).classList.add('active');
+            statusEl.innerText = m === 'draw' ? "🎨 绘画模式: 捏合写字，张开悬停" : "✋ 移动模式: 捏合抓取画布";
+        }
+
+        function changeSize(delta) {
+            state.brushSize = Math.max(2, Math.min(50, state.brushSize + delta));
+            statusEl.innerText = `笔刷大小: ${state.brushSize}`;
+        }
+
+        function clearCanvas() {
+            canvases.draw.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            offset = { x: 0, y: 0 };
+            document.getElementById('drawing_canvas').style.transform = `none`;
+        }
+
+        function saveCanvas() {
+            const link = document.createElement('a');
+            link.download = 'gesture_art.png';
+            link.href = document.getElementById('drawing_canvas').toDataURL();
+            link.click();
+        }
+
+        // --- 交互与悬停检测 ---
+        function updateHover(x, y) {
+            const els = document.elementsFromPoint(x, y);
+            let target = null;
+            
+            // 查找 interactive 按钮
+            for (let el of els) {
+                if (el.classList.contains('interactive')) { target = el; break; }
+                if (el.parentElement?.classList.contains('interactive')) { target = el.parentElement; break; }
+            }
+
+            if (target) {
+                if (hoverTarget !== target) {
+                    resetHover();
+                    hoverTarget = target;
+                    const ring = target.querySelector('.progress-ring');
+                    if (ring) ring.style.display = 'block';
+                    
+                    // 1秒后触发点击
+                    hoverTimer = setTimeout(() => {
+                        target.click();
+                        // 点击动画反馈
+                        target.style.transform = 'scale(0.9)';
+                        setTimeout(() => target.style.transform = '', 150);
+                        resetHover();
+                    }, 1000);
+                }
+            } else {
+                resetHover();
+            }
+        }
+
+        function resetHover() {
+            if (hoverTarget) {
+                const ring = hoverTarget.querySelector('.progress-ring');
+                if (ring) ring.style.display = 'none';
+            }
+            clearTimeout(hoverTimer);
+            hoverTarget = null;
+        }
+
+        // --- 主循环 ---
+        function onResults(results) {
+            // 1. 绘制视频底图
+            canvases.vid.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            canvases.vid.drawImage(results.image, 0, 0, window.innerWidth, window.innerHeight);
+
+            // 2. 绘制手部骨骼 (在 bone_canvas 层，因为 CSS 翻转了，所以直接画 landmarks 即可)
+            canvases.bone.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvases.bone, landmarks, HAND_CONNECTIONS, 
+                                 {color: '#00FF00', lineWidth: 2});
+                    drawLandmarks(canvases.bone, landmarks, 
+                                {color: '#FF0000', lineWidth: 1, radius: 3});
+                }
+            }
+
+            // 3. 清空光标层
+            canvases.cursor.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                
+                // 关键点: 食指尖(8), 拇指尖(4)
+                // 注意：因为 video 和 bone 层被 CSS 翻转了，但我们在 JS 里计算 cursor 和 painting 坐标时
+                // 需要手动处理镜像，以便让 cursor 和画面逻辑匹配。
+                
+                // 计算原始屏幕坐标 (镜像后)
+                const targetX = (1 - lm[8].x) * window.innerWidth;
+                const targetY = lm[8].y * window.innerHeight;
+                const thumbX = (1 - lm[4].x) * window.innerWidth;
+                const thumbY = lm[4].y * window.innerHeight;
+
+                // --- A. 坐标平滑 (核心防抖) ---
+                if (currPos.x === 0 && currPos.y === 0) {
+                    currPos.x = targetX; currPos.y = targetY;
+                }
+                
+                // Lerp 插值：当前位置逐渐趋向目标位置
+                currPos.x = lerp(currPos.x, targetX, SMOOTHING_FACTOR);
+                currPos.y = lerp(currPos.y, targetY, SMOOTHING_FACTOR);
+
+                // --- B. 状态判定 (捏合 vs 张开) ---
+                // 计算归一化坐标的距离 (不受屏幕分辨率影响)
+                const pinchDist = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+                const isPinchingNow = pinchDist < PINCH_THRESHOLD;
+
+                // --- C. 绘制光标 ---
+                // 光标总是显示，但根据状态改变颜色
+                canvases.cursor.beginPath();
+                canvases.cursor.arc(currPos.x, currPos.y, state.brushSize / 2, 0, Math.PI * 2);
+                
+                if (!state.hasStarted) {
+                    // 锁定状态
+                    canvases.cursor.strokeStyle = 'red';
+                    canvases.cursor.stroke();
+                    canvases.cursor.fillStyle = 'rgba(255,0,0,0.2)';
+                    canvases.cursor.fill();
+                } else if (isPinchingNow) {
+                    // 捏合（激活）状态
+                    canvases.cursor.fillStyle = document.getElementById('colorPicker').value;
+                    canvases.cursor.fill();
+                    canvases.cursor.lineWidth = 2;
+                    canvases.cursor.strokeStyle = 'white';
+                    canvases.cursor.stroke();
+                } else {
+                    // 悬停（抬笔）状态
+                    canvases.cursor.strokeStyle = '#00ff88';
+                    canvases.cursor.lineWidth = 2;
+                    canvases.cursor.stroke();
+                }
+
+                // 检测UI悬停 (始终允许，方便切换)
+                updateHover(currPos.x, currPos.y);
+
+                // --- D. 功能逻辑 ---
+                
+                // 只有选择了画笔后才执行
+                if (state.hasStarted) {
+                    if (state.mode === 'draw') {
+                        // 绘画模式：捏合 = 画，张开 = 停
+                        if (isPinchingNow) {
+                            const brush = BRUSHES[state.brushType];
+                            
+                            // 计算相对于画布的坐标 (减去位移)
+                            const dx = currPos.x - offset.x;
+                            const dy = currPos.y - offset.y;
+
+                            if (!state.isPinching) {
+                                // 刚开始捏合 (落笔瞬间)
+                                state.isPinching = true;
+                                prevPos = { x: dx, y: dy };
+                            } else {
+                                // 持续捏合 (绘制中)
+                                canvases.draw.beginPath();
+                                canvases.draw.moveTo(prevPos.x, prevPos.y);
+                                // 使用二次贝塞尔曲线进一步平滑 (可选，这里用直线+lerp已经很好了)
+                                canvases.draw.lineTo(dx, dy);
+                                
+                                canvases.draw.strokeStyle = document.getElementById('colorPicker').value;
+                                canvases.draw.lineWidth = state.brushSize * brush.widthMult;
+                                canvases.draw.lineCap = brush.cap;
+                                canvases.draw.globalAlpha = brush.alpha;
+                                if (brush.shadow > 0) {
+                                    canvases.draw.shadowBlur = brush.shadow;
+                                    canvases.draw.shadowColor = canvases.draw.strokeStyle;
+                                } else {
+                                    canvases.draw.shadowBlur = 0;
+                                }
+                                
+                                canvases.draw.stroke();
+                                canvases.draw.globalAlpha = 1.0; // 还原
+                                prevPos = { x: dx, y: dy };
+                            }
+                        } else {
+                            state.isPinching = false;
+                        }
+
+                    } else if (state.mode === 'move') {
+                        // 移动模式
+                        if (isPinchingNow) {
+                            if (!state.isPinching) {
+                                state.isPinching = true;
+                                startPinchPos = { x: currPos.x, y: currPos.y };
+                            } else {
+                                const dx = currPos.x - startPinchPos.x;
+                                const dy = currPos.y - startPinchPos.y;
+                                offset.x += dx;
+                                offset.y += dy;
+                                document.getElementById('drawing_canvas').style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+                                startPinchPos = { x: currPos.x, y: currPos.y };
+                            }
+                            // 视觉反馈：连接线
+                            canvases.cursor.beginPath();
+                            canvases.cursor.moveTo(currPos.x, currPos.y);
+                            canvases.cursor.lineTo(thumbX, thumbY);
+                            canvases.cursor.strokeStyle = 'yellow';
+                            canvases.cursor.stroke();
+                        } else {
+                            state.isPinching = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 启动 ---
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+        camera.start().then(() => statusEl.innerText = "系统就绪，请选择画笔");
+    </script>
+</body>
+</html>
