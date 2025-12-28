@@ -416,7 +416,7 @@
         }
 
         // --- 启动 ---
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        const hands = new Hands({locateFile: (file) => `https://unpkg.com/@mediapipe/hands/${file}`});
         hands.setOptions({
             maxNumHands: 1,
             modelComplexity: 1,
