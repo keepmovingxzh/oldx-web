@@ -69,7 +69,7 @@ function initMediaPipe() {
     const videoElement = document.getElementsByClassName('input_video')[0];
 
     hands = new Hands({locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        return `https://unpkg.com/@mediapipe/hands/${file}`;
     }});
 
     hands.setOptions({

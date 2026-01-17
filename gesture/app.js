@@ -1,6 +1,6 @@
 // --- 旗舰版配置 ---
 const CONFIG = {
-    photoCount: 8,         
+    photoCount: 19,         
     photoPath: 'photo/',
     // 粒子配置
     treeParticles: 65000,   
@@ -641,7 +641,7 @@ function resetActivePhoto() {
 // --- 视觉识别 ---
 function initMediaPipe() {
     const video = document.getElementById('input_video');
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    const hands = new Hands({locateFile: (file) => `https://unpkg.com/@mediapipe/hands/${file}`});
     hands.setOptions({maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7});
     hands.onResults(onHandResults);
     const cam = new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 640, height: 480 });
